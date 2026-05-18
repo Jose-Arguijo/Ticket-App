@@ -397,6 +397,7 @@ function findVisibleFiles(db, user, employeeId) {
 
 function createExcelHtml({ file, employee, business }) {
   const rows = cleanRows(file.rows);
+
   const escape = (value) =>
     String(value ?? "")
       .replaceAll("&", "&amp;")
@@ -408,10 +409,20 @@ function createExcelHtml({ file, employee, business }) {
     .map(
       (row) => `<tr>
         <td>${escape(row.date)}</td>
+
         <td>${escape(row.to)}</td>
+
         <td>${escape(row.from)}</td>
-        <td>${escape(row.ticketNumber)}</td>
-        <td>${escape(row.tons)}</td>
+
+        <!-- Force Excel to keep ticket numbers as whole numbers/text -->
+        <td style="mso-number-format:'\\@';">
+          ${escape(row.ticketNumber)}
+        </td>
+
+        <!-- Force tons to always show 2 decimals -->
+        <td style="mso-number-format:'0.00';">
+          ${escape(row.tons)}
+        </td>
       </tr>`
     )
     .join("");
@@ -421,13 +432,37 @@ function createExcelHtml({ file, employee, business }) {
 <head>
   <meta charset="utf-8">
   <style>
-    table { border-collapse: collapse; font-family: Arial, sans-serif; }
-    th, td { border: 1px solid #888; padding: 6px 10px; }
-    th { background: #eef2f7; }
+    table {
+      border-collapse: collapse;
+      font-family: Arial, sans-serif;
+      width: 100%;
+    }
+
+    th, td {
+      border: 1px solid #888;
+      padding: 6px 10px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      background: #eef2f7;
+      font-weight: bold;
+    }
+
+    h2 {
+      font-family: Arial, sans-serif;
+      margin-bottom: 12px;
+    }
   </style>
 </head>
 <body>
-  <h2>${escape(business.name)} - ${escape(employee.name)} - Week of ${escape(file.weekStart)}</h2>
+  <h2>
+    ${escape(business.name)} -
+    ${escape(employee.name)} -
+    Week of ${escape(file.weekStart)}
+  </h2>
+
   <table>
     <thead>
       <tr>
@@ -438,7 +473,13 @@ function createExcelHtml({ file, employee, business }) {
         <th>Tons</th>
       </tr>
     </thead>
-    <tbody>${bodyRows || '<tr><td colspan="5">No rows</td></tr>'}</tbody>
+
+    <tbody>
+      ${
+        bodyRows ||
+        '<tr><td colspan="5">No rows</td></tr>'
+      }
+    </tbody>
   </table>
 </body>
 </html>`;
