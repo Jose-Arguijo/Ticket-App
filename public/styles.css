@@ -341,7 +341,7 @@ button:disabled {
 .workspace {
   width: min(1440px, 100%);
   margin: 0 auto;
-  padding: 28px;
+  padding: 14px;
 }
 
 .grid {
@@ -446,7 +446,7 @@ button:disabled {
 
 .data-table th,
 .data-table td {
-  padding: 12px;
+  padding: 8px;
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: middle;
@@ -476,7 +476,7 @@ button:disabled {
 }
 
 .editor-panel {
-  margin-top: 18px;
+  margin-top: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -484,7 +484,7 @@ button:disabled {
 }
 
 .editor-header {
-  padding: 18px;
+  padding: 12px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -517,7 +517,7 @@ button:disabled {
 }
 
 .sheet-table {
-  min-width: 820px;
+  min-width: 100%;
   table-layout: fixed;
 }
 
@@ -525,12 +525,12 @@ button:disabled {
 .sheet-table td {
   border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  padding: 8px;
+  padding: 4px;
   text-align: left;
 }
 
 .sheet-table th {
-  height: 44px;
+  height: 36px;
   background: var(--surface-2);
   color: #31534f;
   font-size: 12px;
@@ -554,8 +554,8 @@ button:disabled {
 
 .sheet-input {
   width: 100%;
-  height: 38px;
-  padding: 8px 10px;
+  height: 32px;
+  padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
@@ -578,7 +578,7 @@ button:disabled {
 }
 
 .sheet-footer {
-  padding: 14px 18px;
+  padding: 10px 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;

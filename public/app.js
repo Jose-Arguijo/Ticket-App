@@ -62,6 +62,41 @@ function formatShortDate(value) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+function formatWeekRange(dateStr) {
+  if (!dateStr) return "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const startDate = new Date(year, month - 1, day);
+  
+  // Calculate day of week (0 = Sunday, 1 = Monday)
+  const dayOfWeek = startDate.getDay();
+  
+  // Calculate Monday (or use current day if it's Monday)
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const monday = new Date(startDate);
+  monday.setDate(monday.getDate() - daysToMonday);
+  
+  // Calculate Saturday (5 days after Monday)
+  const saturday = new Date(monday);
+  saturday.setDate(saturday.getDate() + 5);
+  
+  const mondayDay = monday.getDate();
+  const saturdayDay = saturday.getDate();
+  
+  return `Week of ${mondayDay}${getOrdinalSuffix(mondayDay)}-${saturdayDay}${getOrdinalSuffix(saturdayDay)}`;
+}
+
+function getOrdinalSuffix(n) {
+  if (n >= 11 && n <= 13) return "th";
+  switch (n % 10) {
+    case 1: return "st";
+    case 2: return "nd";
+    case 3: return "rd";
+    default: return "th";
+  }
+}
+
 function defaultViewForRole(role) {
   return viewsByRole[role]?.[0]?.id || "files";
 }
@@ -602,7 +637,7 @@ function renderEditor() {
       <div class="editor-header">
         <div class="editor-title">
           <h2>${escapeHtml(employeeName)}</h2>
-          <p>Week of <input class="input" id="editor-week" type="date" value="${escapeHtml(file.weekStart || today())}" ${readOnly ? "disabled" : ""}></p>
+          <p><span id="week-display">${escapeHtml(formatWeekRange(file.weekStart || today()))}</span> <input class="input" id="editor-week" type="date" value="${escapeHtml(file.weekStart || today())}" ${readOnly ? "disabled" : ""} style="display: ${readOnly ? 'none' : 'inline-block'}; width: 150px; margin-left: 8px;"></p>
         </div>
         <div class="editor-actions">
           <span class="status-pill ${statusClass(file.status)}">${escapeHtml(statusLabel(file.status))}</span>
@@ -678,7 +713,7 @@ function renderSheetRow(row, index, readOnly) {
       <td><input class="sheet-input" name="to" list="destination-options" value="${escapeHtml(row.to || "")}" placeholder="Destination" ${disabled}></td>
       <td><input class="sheet-input" name="ticketNumber" inputmode="numeric" pattern="[0-9]*" value="${escapeHtml(row.ticketNumber || "")}" placeholder="Ticket #" ${disabled}></td>
       <td><input class="sheet-input" name="tons" inputmode="decimal" value="${escapeHtml(row.tons || "")}" placeholder="0.00" ${disabled}></td>
-      <td>${readOnly ? "" : `<button class="button danger small" data-action="remove-row" data-index="${index}">Remove</button>`}</td>
+      <td>${readOnly ? "" : `<button class="button danger small" data-action="remove-row" data-index="${index}">X</button>`}</td>
     </tr>
   `;
 }
@@ -926,6 +961,16 @@ function bindFileEvents() {
   document.querySelectorAll('[data-action="flag-file"]').forEach((button) => {
     button.addEventListener("click", () => flagFile(button.dataset.id));
   });
+
+  const editorWeekInput = document.getElementById("editor-week");
+  if (editorWeekInput) {
+    editorWeekInput.addEventListener("change", () => {
+      const weekDisplay = document.getElementById("week-display");
+      if (weekDisplay) {
+        weekDisplay.textContent = formatWeekRange(editorWeekInput.value);
+      }
+    });
+  }
 
   document.querySelector('[data-action="add-row"]')?.addEventListener("click", () => {
     state.selectedFile.rows = collectRows();

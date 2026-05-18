@@ -342,7 +342,7 @@ function normalizeDestinationName(name) {
 
 function cleanRows(rows) {
   if (!Array.isArray(rows)) return [];
-  return rows
+  const mapped = rows
     .slice(0, 250)
     .map((row, index) => {
       const ticketNumber = String(row.ticketNumber || "").trim();
@@ -363,8 +363,13 @@ function cleanRows(rows) {
         ticketNumber,
         tons: tons ? Number(tons).toFixed(2) : ""
       };
-    })
-    .filter((row) => row.date || row.to || row.from || row.ticketNumber || row.tons);
+    });
+
+  // Only filter completely empty rows, but keep structure intact
+  const filtered = mapped.filter((row) => row.date || row.to || row.from || row.ticketNumber || row.tons);
+  
+  // Always return the filtered rows (which may be empty)
+  return filtered;
 }
 
 function usersById(db) {
