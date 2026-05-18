@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="Truck paperwork mark">
+  <rect width="96" height="96" rx="20" fill="#0f766e"/>
+  <path d="M18 33h38a5 5 0 0 1 5 5v25H18z" fill="#ffffff"/>
+  <path d="M61 45h10l9 10v8H61z" fill="#d97706"/>
+  <path d="M28 64a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm40 0a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z" fill="#111827"/>
+  <path d="M24 25h22v6H24zM24 38h25v5H24zM24 49h21v5H24z" fill="#0f766e"/>
+</svg>
