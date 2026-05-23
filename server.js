@@ -11,11 +11,19 @@ const DB_FILE = process.env.DATA_FILE ? path.resolve(process.env.DATA_FILE) : pa
 const DB_DIR = path.dirname(DB_FILE);
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 12;
 const USE_MONGODB = Boolean(process.env.MONGODB_URI);
+let mongoEnabled = USE_MONGODB;
 const MONGODB_DB = process.env.MONGODB_DB || "ticket_app";
 const MONGODB_COLLECTION = process.env.MONGODB_COLLECTION || "app_state";
 const MONGODB_STATE_ID = "primary";
 
 let mongoClientPromise = null;
+
+function disableMongo(reason, error) {
+  mongoEnabled = false;
+  mongoClientPromise = null;
+  console.warn("MongoDB disabled:", reason);
+  if (error) console.warn(error);
+}
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -174,13 +182,34 @@ function normalizeDb(db = {}) {
 }
 
 async function getMongoCollection() {
-  if (!mongoClientPromise) {
-    const { MongoClient } = require("mongodb");
-    const client = new MongoClient(process.env.MONGODB_URI);
-    mongoClientPromise = client.connect();
+  if (!mongoEnabled) {
+    return null;
   }
-  const client = await mongoClientPromise;
-  return client.db(MONGODB_DB).collection(MONGODB_COLLECTION);
+
+  if (!mongoClientPromise) {
+    try {
+      const { MongoClient } = require("mongodb");
+      const client = new MongoClient(process.env.MONGODB_URI);
+      mongoClientPromise = client.connect();
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") {
+        disableMongo("initial MongoDB client creation failed", error);
+        return null;
+      }
+      throw new HttpError(500, "MongoDB connection failed during initialization.");
+    }
+  }
+
+  try {
+    const client = await mongoClientPromise;
+    return client.db(MONGODB_DB).collection(MONGODB_COLLECTION);
+  } catch (error) {
+    if (process.env.NODE_ENV !== "production") {
+      disableMongo("MongoDB connection failed", error);
+      return null;
+    }
+    throw new HttpError(500, "MongoDB connection failed. Check MONGODB_URI and network access.");
+  }
 }
 
 async function ensureJsonDb() {
@@ -193,14 +222,16 @@ async function ensureJsonDb() {
 }
 
 async function readDb() {
-  if (USE_MONGODB) {
+  if (mongoEnabled) {
     const collection = await getMongoCollection();
-    let doc = await collection.findOne({ _id: MONGODB_STATE_ID });
-    if (!doc) {
-      await collection.insertOne({ _id: MONGODB_STATE_ID, ...createSeedDb() });
-      doc = await collection.findOne({ _id: MONGODB_STATE_ID });
+    if (collection) {
+      let doc = await collection.findOne({ _id: MONGODB_STATE_ID });
+      if (!doc) {
+        await collection.insertOne({ _id: MONGODB_STATE_ID, ...createSeedDb() });
+        doc = await collection.findOne({ _id: MONGODB_STATE_ID });
+      }
+      return normalizeDb(doc);
     }
-    return normalizeDb(doc);
   }
 
   await ensureJsonDb();
@@ -210,10 +241,12 @@ async function readDb() {
 
 async function writeDb(db) {
   const normalized = normalizeDb(db);
-  if (USE_MONGODB) {
+  if (mongoEnabled) {
     const collection = await getMongoCollection();
-    await collection.updateOne({ _id: MONGODB_STATE_ID }, { $set: normalized }, { upsert: true });
-    return;
+    if (collection) {
+      await collection.updateOne({ _id: MONGODB_STATE_ID }, { $set: normalized }, { upsert: true });
+      return;
+    }
   }
 
   await fs.mkdir(DB_DIR, { recursive: true });
@@ -304,7 +337,7 @@ function sendJson(res, status, payload, headers = {}) {
 
 function sendError(res, error) {
   const status = error instanceof HttpError ? error.status : 500;
-  const message = status === 500 ? "Something went wrong." : error.message;
+  const message = error instanceof HttpError ? error.message : status === 500 ? "Something went wrong." : error.message;
   if (status === 500) console.error(error);
   sendJson(res, status, { error: message });
 }
