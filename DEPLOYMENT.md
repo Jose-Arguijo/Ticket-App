@@ -9,22 +9,24 @@ Use **MongoDB Atlas** for deployed data. The local `data/db.json` fallback is on
 
 ## Required Environment Variables
 
-Set these on Render or Vercel:
+Set these on Render or Vercel. Use `.env.deploy.example` as the deployment checklist, not your local `.env` file.
 
 ```bash
 NODE_ENV=production
 MONGODB_URI=mongodb+srv://<user>:<password>@<cluster-host>/ticket_app?retryWrites=true&w=majority
 MONGODB_DB=ticket_app
+MONGODB_COLLECTION=app_state
 ```
 
 Optional:
 
 ```bash
-MONGODB_COLLECTION=app_state
 ALLOWED_ORIGINS=https://your-frontend-domain.com
 COOKIE_SAMESITE=Lax
 COOKIE_SECURE=true
 ```
+
+Do not copy `PORT=4173` or `NODE_ENV=development` from local development into a deployment dashboard.
 
 Keep `COOKIE_SAMESITE=Lax` for same-origin deployments. Only use `COOKIE_SAMESITE=None` when your frontend and API are on different sites, and pair it with `COOKIE_SECURE=true`.
 
@@ -53,9 +55,8 @@ Dashboard setup:
    - Start command: `npm start`
    - Node version: `22`
 5. Add environment variables:
-   - `NODE_ENV=production`
    - `MONGODB_URI=<your Atlas URI>`
-   - `MONGODB_DB=ticket_app`
+   - The remaining non-secret defaults are already in `render.yaml`.
 6. Deploy.
 
 Render will provide an `onrender.com` URL. If you use Render for the whole app, no CORS or cross-site cookie setup is needed.
@@ -75,6 +76,10 @@ Dashboard setup:
    - `NODE_ENV=production`
    - `MONGODB_URI=<your Atlas URI>`
    - `MONGODB_DB=ticket_app`
+   - `MONGODB_COLLECTION=app_state`
+   - `ALLOWED_ORIGINS=` (leave blank for same-origin Vercel)
+   - `COOKIE_SAMESITE=Lax`
+   - `COOKIE_SECURE=true`
 7. Deploy.
 
 CLI setup:
@@ -82,10 +87,15 @@ CLI setup:
 ```bash
 vercel login
 vercel link
-vercel env add MONGODB_URI production preview development
-vercel env add MONGODB_DB production preview development
+vercel env add MONGODB_URI
+vercel env add MONGODB_DB
+vercel env add MONGODB_COLLECTION
+vercel env add COOKIE_SAMESITE
+vercel env add COOKIE_SECURE
 vercel --prod
 ```
+
+When the CLI asks which environments to apply each variable to, choose Production, Preview, and Development if you want `vercel env pull` to populate local values. Skip `ALLOWED_ORIGINS` unless the frontend and API are on different origins.
 
 ## Should You Use Cloudinary?
 

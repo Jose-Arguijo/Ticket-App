@@ -13,3 +13,11 @@ services:
         sync: false
       - key: MONGODB_DB
         value: ticket_app
+      - key: MONGODB_COLLECTION
+        value: app_state
+      - key: ALLOWED_ORIGINS
+        value: ""
+      - key: COOKIE_SAMESITE
+        value: Lax
+      - key: COOKIE_SECURE
+        value: "true"
