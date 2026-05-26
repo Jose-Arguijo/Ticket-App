@@ -40,9 +40,16 @@ Keep `COOKIE_SAMESITE=Lax` for same-origin deployments. Only use `COOKIE_SAMESIT
 6. For Vercel serverless deployments, you may need Atlas access from anywhere (`0.0.0.0/0`) unless you use a setup with stable egress. Use a strong database user and least-privilege permissions.
 7. Copy the Node.js connection string and set it as `MONGODB_URI`.
 
+Once `MONGODB_URI` is available, you can initialize the app state document with:
+
+```bash
+npm run init:mongo
+```
+
 ## Render
 
 The repo includes `render.yaml`, so Render can create the service from the blueprint.
+Render health checks are pointed at `/api/health`.
 
 Dashboard setup:
 

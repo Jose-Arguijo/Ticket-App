@@ -11,7 +11,12 @@ const state = {
   selectedFile: null,
   view: null,
   notice: null,
-  noticeType: "success"
+  noticeType: "success",
+  loading: true,
+  busyAction: null,
+  sheetError: "",
+  rowErrors: {},
+  reviewError: ""
 };
 
 const viewsByRole = {
@@ -34,6 +39,14 @@ const statusLabels = {
   draft: "Draft",
   submitted: "Submitted",
   needs_review: "Needs review"
+};
+
+const fieldLabels = {
+  date: "date",
+  from: "origin",
+  to: "destination",
+  ticketNumber: "ticket number",
+  tons: "tons"
 };
 
 function today() {
@@ -60,6 +73,12 @@ function formatShortDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function isValidDateValue(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
 function formatWeekRange(dateStr) {
@@ -120,6 +139,73 @@ function statusClass(status) {
   return String(status || "draft").replaceAll("_", "-");
 }
 
+function renderStatusPill(status) {
+  return `<span class="status-pill ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>`;
+}
+
+function rowHasData(row) {
+  return Boolean(row.date || row.from || row.to || row.ticketNumber || row.tons);
+}
+
+function totalTons(rows = []) {
+  return rows.reduce((sum, row) => {
+    const value = Number(row.tons);
+    return Number.isFinite(value) ? sum + value : sum;
+  }, 0);
+}
+
+function errorKey(index, field) {
+  return `${index}.${field}`;
+}
+
+function rowError(index, field) {
+  return state.rowErrors[errorKey(index, field)] || "";
+}
+
+function setAction(action) {
+  state.busyAction = action;
+  render();
+}
+
+function clearAction() {
+  state.busyAction = null;
+  render();
+}
+
+function isBusy(action) {
+  return state.busyAction === action;
+}
+
+function busyDisabled() {
+  return state.busyAction ? "disabled aria-busy=\"true\"" : "";
+}
+
+function setFormPending(formEl, pending, label = "Saving...") {
+  const controls = formEl.querySelectorAll("input, select, textarea, button");
+  controls.forEach((control) => {
+    control.disabled = pending;
+  });
+
+  const submitButton = formEl.querySelector('button[type="submit"]');
+  if (!submitButton) return;
+  if (!submitButton.dataset.defaultText) submitButton.dataset.defaultText = submitButton.textContent;
+  submitButton.textContent = pending ? label : submitButton.dataset.defaultText;
+}
+
+function clearSheetValidation() {
+  state.sheetError = "";
+  state.rowErrors = {};
+}
+
+function renderEmptyState(title, body = "") {
+  return `
+    <div class="empty">
+      <strong>${escapeHtml(title)}</strong>
+      ${body ? `<span>${escapeHtml(body)}</span>` : ""}
+    </div>
+  `;
+}
+
 function canDeleteFile(file) {
   return state.user?.role === "employee" && file?.employeeId === state.user.id && file.status === "draft" && !file.submittedAt;
 }
@@ -159,6 +245,7 @@ function showNotice(message, type = "success") {
 }
 
 async function init() {
+  render();
   try {
     const session = await api("/api/me");
     state.user = session.user;
@@ -170,6 +257,8 @@ async function init() {
       state.notice = error.message;
       state.noticeType = "error";
     }
+  } finally {
+    state.loading = false;
   }
   render();
 }
@@ -197,6 +286,11 @@ async function refreshRoleData() {
 }
 
 function render() {
+  if (state.loading) {
+    renderLoading();
+    return;
+  }
+
   if (!state.user) {
     renderLogin();
     return;
@@ -218,9 +312,23 @@ function render() {
   bindFileEvents();
 }
 
+function renderLoading() {
+  app.innerHTML = `
+    <main class="loading-screen" aria-live="polite">
+      <div class="loading-card">
+        <img src="/truck-mark.svg" alt="">
+        <div>
+          <strong>Dispatch Papers</strong>
+          <span>Loading workspace...</span>
+        </div>
+      </div>
+    </main>
+  `;
+}
+
 function renderNotice() {
   if (!state.notice) return "";
-  return `<div class="notice ${state.noticeType === "error" ? "error" : ""}">${escapeHtml(state.notice)}</div>`;
+  return `<div class="notice ${state.noticeType === "error" ? "error" : ""}" role="status" aria-live="polite">${escapeHtml(state.notice)}</div>`;
 }
 
 function renderTopbar() {
@@ -301,6 +409,7 @@ function renderLogin() {
     event.preventDefault();
     const formEl = event.currentTarget;
     const form = new FormData(formEl);
+    setFormPending(formEl, true, "Logging in...");
     try {
       const data = await api("/api/login", {
         method: "POST",
@@ -313,6 +422,7 @@ function renderLogin() {
       await refreshRoleData();
       showNotice(`Welcome, ${state.user.name}.`);
     } catch (error) {
+      setFormPending(formEl, false);
       showNotice(error.message, "error");
     }
   });
@@ -344,7 +454,7 @@ function renderAdminBusinesses() {
     </section>
     <section class="panel section-panel">
       <div class="panel-header"><div><h2>Businesses</h2><p>Managers and activity by company.</p></div></div>
-      ${state.businesses.length ? renderBusinessTable() : `<div class="empty">No businesses yet.</div>`}
+      ${state.businesses.length ? renderBusinessTable() : renderEmptyState("No businesses yet", "Create a business from Setup.")}
     </section>
   `;
 }
@@ -443,6 +553,7 @@ function renderManagerNewFilePanel() {
         </form>
       </div>
     </section>
+    ${state.employees.length ? "" : `<div class="inline-empty">Add an employee before creating weekly files.</div>`}
   `;
 }
 
@@ -486,7 +597,7 @@ function renderManagerEmployees() {
 }
 
 function renderEmployeeList() {
-  if (!state.employees.length) return `<div class="empty">No employees yet.</div>`;
+  if (!state.employees.length) return renderEmptyState("No employees yet", "Create the first driver account to start weekly files.");
   return `
     <div class="table-wrap">
       <table class="data-table">
@@ -552,7 +663,7 @@ function renderDestinationManager() {
 }
 
 function renderDestinationList(canRemove = false) {
-  if (!state.destinations.length) return `<div class="empty">No destinations yet.</div>`;
+  if (!state.destinations.length) return renderEmptyState("No destinations yet", "Saved destinations will appear as sheet suggestions.");
   return `
     <div class="destination-list">
       ${state.destinations
@@ -574,7 +685,7 @@ function renderDestinationList(canRemove = false) {
 }
 
 function renderFilesTable() {
-  if (!state.files.length) return `<div class="empty">No files yet.</div>`;
+  if (!state.files.length) return renderEmptyState("No files yet", "Create a weekly file to start entering tickets.");
   return `
     <div class="table-wrap">
       <table class="data-table">
@@ -592,10 +703,10 @@ function renderFilesTable() {
           ${state.files
             .map(
               (file) => `
-                <tr>
+                <tr class="${state.selectedFile?.id === file.id ? "selected-row" : ""}">
                   ${state.user.role === "manager" ? `<td><strong>${escapeHtml(file.employeeName)}</strong></td>` : ""}
                   <td>${escapeHtml(formatShortDate(file.weekStart))}</td>
-                  <td><span class="status-pill ${statusClass(file.status)}">${escapeHtml(statusLabel(file.status))}</span></td>
+                  <td>${renderStatusPill(file.status)}</td>
                   <td>${file.rowCount}</td>
                   <td>${escapeHtml(formatShortDate(file.updatedAt))}</td>
                   <td class="actions">
@@ -619,7 +730,7 @@ function renderEditor() {
   if (!state.selectedFile) {
     return `
       <section class="panel empty-state">
-        <div class="empty">Open a file to view its sheet.</div>
+        ${renderEmptyState("No file open", "Open a weekly file to view its sheet.")}
       </section>
     `;
   }
@@ -631,23 +742,36 @@ function renderEditor() {
       ? state.user.name
       : state.employees.find((employee) => employee.id === file.employeeId)?.name || "Employee";
   const rows = file.rows?.length ? file.rows : [rowTemplate()];
+  const rowCount = rows.filter(rowHasData).length;
+  const tonsTotal = totalTons(rows);
+  const saveLabel = isBusy("save") ? "Saving..." : "Save";
+  const submitLabel = isBusy("submit") ? "Submitting..." : "Submit";
 
   return `
     <section class="editor-panel">
       <div class="editor-header">
         <div class="editor-title">
           <h2>${escapeHtml(employeeName)}</h2>
-          <p><span id="week-display">${escapeHtml(formatWeekRange(file.weekStart || today()))}</span> <input class="input" id="editor-week" type="date" value="${escapeHtml(file.weekStart || today())}" ${readOnly ? "disabled" : ""} style="display: ${readOnly ? 'none' : 'inline-block'}; width: 150px; margin-left: 8px;"></p>
+          <p>${escapeHtml(rowCount)} rows · ${tonsTotal.toFixed(2)} tons · <span id="week-display">${escapeHtml(formatWeekRange(file.weekStart || today()))}</span></p>
+          ${
+            readOnly
+              ? ""
+              : `<label class="field compact week-field">
+                  <span>Week start</span>
+                  <input class="input" id="editor-week" type="date" value="${escapeHtml(file.weekStart || today())}">
+                </label>`
+          }
         </div>
         <div class="editor-actions">
-          <span class="status-pill ${statusClass(file.status)}">${escapeHtml(statusLabel(file.status))}</span>
+          ${renderStatusPill(file.status)}
           <button class="button ghost small" data-action="export-file" data-id="${escapeHtml(file.id)}">Excel</button>
-          ${readOnly ? "" : `<button class="button secondary small" data-action="save-file">Save</button>`}
-          ${readOnly ? "" : `<button class="button warning small" data-action="submit-file">Submit</button>`}
-          ${canDeleteFile(file) ? `<button class="button danger small" data-action="delete-file" data-id="${escapeHtml(file.id)}">Delete draft</button>` : ""}
+          ${readOnly ? "" : `<button class="button secondary small" data-action="save-file" ${busyDisabled()}>${saveLabel}</button>`}
+          ${readOnly ? "" : `<button class="button warning small" data-action="submit-file" ${busyDisabled()}>${submitLabel}</button>`}
+          ${canDeleteFile(file) ? `<button class="button danger small" data-action="delete-file" data-id="${escapeHtml(file.id)}" ${busyDisabled()}>${isBusy("delete") ? "Deleting..." : "Delete draft"}</button>` : ""}
         </div>
       </div>
       ${file.reviewNote ? `<div class="review-note"><strong>Review note</strong><span>${escapeHtml(file.reviewNote)}</span></div>` : ""}
+      ${state.sheetError ? `<div class="sheet-error-banner" role="alert">${escapeHtml(state.sheetError)}</div>` : ""}
       <div class="sheet-zone">
         ${renderDestinationDatalist()}
         <table class="sheet-table" id="sheet-table">
@@ -673,8 +797,8 @@ function renderEditor() {
           : `<div class="sheet-footer">
               <button class="button ghost small" data-action="add-row">Add row</button>
               <div class="split-actions">
-                <button class="button secondary small" data-action="save-file">Save changes</button>
-                <button class="button warning small" data-action="submit-file">Submit file</button>
+                <button class="button secondary small" data-action="save-file" ${busyDisabled()}>${isBusy("save") ? "Saving..." : "Save changes"}</button>
+                <button class="button warning small" data-action="submit-file" ${busyDisabled()}>${isBusy("submit") ? "Submitting..." : "Submit file"}</button>
               </div>
             </div>`
       }
@@ -688,9 +812,10 @@ function renderManagerReviewControls(file) {
     <div class="sheet-footer review-controls">
       <label class="field review-field">
         <span>Review note</span>
-        <input class="input" id="review-note" value="${escapeHtml(file.reviewNote || "")}" maxlength="800">
+        <textarea class="input review-textarea ${state.reviewError ? "invalid" : ""}" id="review-note" maxlength="800" aria-invalid="${state.reviewError ? "true" : "false"}">${escapeHtml(file.reviewNote || "")}</textarea>
+        ${state.reviewError ? `<span class="field-error">${escapeHtml(state.reviewError)}</span>` : ""}
       </label>
-      <button class="button warning small" data-action="flag-file" data-id="${escapeHtml(file.id)}">Flag for review</button>
+      <button class="button warning small" data-action="flag-file" data-id="${escapeHtml(file.id)}" ${busyDisabled()}>${isBusy("flag") ? "Flagging..." : "Flag for review"}</button>
     </div>
   `;
 }
@@ -705,15 +830,36 @@ function renderDestinationDatalist() {
 
 function renderSheetRow(row, index, readOnly) {
   const disabled = readOnly ? "disabled" : "";
+  const inputCell = (field, type, extra = "") => {
+    const error = rowError(index, field);
+    const id = `row-${index}-${field}`;
+    const value = escapeHtml(row[field] || "");
+    return `
+      <input
+        class="sheet-input ${error ? "invalid" : ""}"
+        id="${id}"
+        name="${field}"
+        type="${type}"
+        value="${value}"
+        aria-label="Row ${index + 1} ${fieldLabels[field]}"
+        aria-invalid="${error ? "true" : "false"}"
+        ${error ? `aria-describedby="${id}-error"` : ""}
+        ${extra}
+        ${disabled}
+      >
+      ${error ? `<span class="field-error compact-error" id="${id}-error">${escapeHtml(error)}</span>` : ""}
+    `;
+  };
+
   return `
     <tr class="sheet-row">
       <td>${index + 1}</td>
-      <td><input class="sheet-input" name="date" type="date" value="${escapeHtml(row.date || "")}" ${disabled}></td>
-      <td><input class="sheet-input" name="from" list="destination-options" value="${escapeHtml(row.from || "")}" placeholder="Origin" ${disabled}></td>
-      <td><input class="sheet-input" name="to" list="destination-options" value="${escapeHtml(row.to || "")}" placeholder="Destination" ${disabled}></td>
-      <td><input class="sheet-input" name="ticketNumber" inputmode="numeric" pattern="[0-9]*" value="${escapeHtml(row.ticketNumber || "")}" placeholder="Ticket #" ${disabled}></td>
-      <td><input class="sheet-input" name="tons" inputmode="decimal" value="${escapeHtml(row.tons || "")}" placeholder="0.00" ${disabled}></td>
-      <td>${readOnly ? "" : `<button class="button danger small" data-action="remove-row" data-index="${index}">X</button>`}</td>
+      <td>${inputCell("date", "date")}</td>
+      <td>${inputCell("from", "text", 'list="destination-options" placeholder="Origin"')}</td>
+      <td>${inputCell("to", "text", 'list="destination-options" placeholder="Destination"')}</td>
+      <td>${inputCell("ticketNumber", "text", 'inputmode="numeric" pattern="[0-9]*" placeholder="Ticket #"')}</td>
+      <td>${inputCell("tons", "text", 'inputmode="decimal" placeholder="0.00"')}</td>
+      <td>${readOnly ? "" : `<button class="button danger small" data-action="remove-row" data-index="${index}" aria-label="Remove row ${index + 1}">Remove</button>`}</td>
     </tr>
   `;
 }
@@ -728,21 +874,61 @@ function collectRows() {
   }));
 }
 
-function validateRows(rows) {
+function createValidationError(message) {
+  const error = new Error(message);
+  error.isValidationError = true;
+  return error;
+}
+
+function validateRows(rows, options = {}) {
+  const rowErrors = {};
+  let firstError = "";
+
+  const mark = (index, field, message) => {
+    rowErrors[errorKey(index, field)] = message;
+    if (!firstError) firstError = `Row ${index + 1}: ${message}`;
+  };
+
   rows.forEach((row, index) => {
+    const hasData = rowHasData(row);
+    if (row.date && !isValidDateValue(row.date)) {
+      mark(index, "date", "Enter a valid date.");
+    }
     if (row.ticketNumber && !/^\d+$/.test(row.ticketNumber)) {
-      throw new Error(`Ticket number in row ${index + 1} must be an integer.`);
+      mark(index, "ticketNumber", "Use whole numbers only.");
     }
     if (row.tons && !/^\d+(\.\d{1,2})?$/.test(row.tons)) {
-      throw new Error(`Tons in row ${index + 1} must use no more than two decimal places.`);
+      mark(index, "tons", "Use no more than two decimals.");
+    }
+    if (options.requireComplete && hasData) {
+      ["date", "from", "to", "ticketNumber", "tons"].forEach((field) => {
+        if (!row[field]) mark(index, field, `Add ${fieldLabels[field]}.`);
+      });
     }
   });
+
+  if (options.requireComplete && !rows.some(rowHasData)) {
+    firstError = "Add at least one ticket row before submitting.";
+  }
+
+  state.rowErrors = rowErrors;
+  state.sheetError = firstError;
+
+  if (firstError) {
+    if (state.selectedFile) state.selectedFile.rows = rows.length ? rows : [rowTemplate()];
+    render();
+    throw createValidationError(firstError);
+  }
+
+  clearSheetValidation();
 }
 
 async function openFile(id) {
   try {
     const data = await api(`/api/files/${encodeURIComponent(id)}`);
     state.selectedFile = data.file;
+    clearSheetValidation();
+    state.reviewError = "";
     state.view = "files";
     render();
   } catch (error) {
@@ -752,26 +938,35 @@ async function openFile(id) {
 
 async function saveSelectedFile(status) {
   if (!state.selectedFile) return;
+  const action = status === "submitted" ? "submit" : "save";
   try {
     const rows = collectRows();
-    validateRows(rows);
+    state.selectedFile.rows = rows.length ? rows : [rowTemplate()];
+    state.selectedFile.weekStart = document.getElementById("editor-week")?.value || state.selectedFile.weekStart;
+    validateRows(rows, { requireComplete: status === "submitted" });
     const payload = {
-      weekStart: document.getElementById("editor-week")?.value || state.selectedFile.weekStart,
+      weekStart: state.selectedFile.weekStart,
       rows
     };
     if (status) payload.status = status;
+    setAction(action);
     const data = await api(`/api/files/${encodeURIComponent(state.selectedFile.id)}`, { method: "PATCH", body: payload });
     state.selectedFile = data.file;
     await refreshRoleData();
+    clearSheetValidation();
     showNotice(status === "submitted" ? "File submitted." : "File saved.");
   } catch (error) {
-    showNotice(error.message, "error");
+    if (!error.isValidationError) showNotice(error.message, "error");
+  } finally {
+    if (state.busyAction === action) clearAction();
   }
 }
 
 async function createFile(body) {
   const data = await api("/api/files", { method: "POST", body: { rows: [rowTemplate()], ...body } });
   state.selectedFile = data.file;
+  clearSheetValidation();
+  state.reviewError = "";
   state.view = "files";
   await refreshRoleData();
   showNotice("File created.");
@@ -780,24 +975,38 @@ async function createFile(body) {
 async function deleteFile(id) {
   if (!window.confirm("Delete this draft?")) return;
   try {
+    setAction("delete");
     await api(`/api/files/${encodeURIComponent(id)}`, { method: "DELETE" });
     if (state.selectedFile?.id === id) state.selectedFile = null;
     await refreshRoleData();
     showNotice("Draft deleted.");
   } catch (error) {
     showNotice(error.message, "error");
+  } finally {
+    if (state.busyAction === "delete") clearAction();
   }
 }
 
 async function flagFile(id) {
   try {
     const reviewNote = document.getElementById("review-note")?.value || "";
+    if (!reviewNote.trim()) {
+      state.reviewError = "Add a review note before flagging.";
+      render();
+      document.getElementById("review-note")?.focus();
+      return;
+    }
+    state.reviewError = "";
+    if (state.selectedFile?.id === id) state.selectedFile.reviewNote = reviewNote.trim();
+    setAction("flag");
     const data = await api(`/api/files/${encodeURIComponent(id)}/flag`, { method: "POST", body: { reviewNote } });
     state.selectedFile = data.file;
     await refreshRoleData();
     showNotice("File flagged for review.");
   } catch (error) {
     showNotice(error.message, "error");
+  } finally {
+    if (state.busyAction === "flag") clearAction();
   }
 }
 
@@ -829,6 +1038,7 @@ function bindAdminEvents() {
     event.preventDefault();
     const formEl = event.currentTarget;
     const form = new FormData(formEl);
+    setFormPending(formEl, true, "Creating...");
     try {
       await api("/api/admin/businesses", { method: "POST", body: { name: form.get("name") } });
       formEl.reset();
@@ -836,6 +1046,8 @@ function bindAdminEvents() {
       showNotice("Business created.");
     } catch (error) {
       showNotice(error.message, "error");
+    } finally {
+      setFormPending(formEl, false);
     }
   });
 
@@ -843,6 +1055,7 @@ function bindAdminEvents() {
     event.preventDefault();
     const formEl = event.currentTarget;
     const form = new FormData(formEl);
+    setFormPending(formEl, true, "Creating...");
     try {
       await api("/api/admin/managers", {
         method: "POST",
@@ -858,6 +1071,8 @@ function bindAdminEvents() {
       showNotice("Manager created.");
     } catch (error) {
       showNotice(error.message, "error");
+    } finally {
+      setFormPending(formEl, false);
     }
   });
 }
@@ -867,6 +1082,7 @@ function bindManagerEvents() {
     event.preventDefault();
     const formEl = event.currentTarget;
     const form = new FormData(formEl);
+    setFormPending(formEl, true, "Creating...");
     try {
       await api("/api/manager/employees", {
         method: "POST",
@@ -881,6 +1097,8 @@ function bindManagerEvents() {
       showNotice("Employee created.");
     } catch (error) {
       showNotice(error.message, "error");
+    } finally {
+      setFormPending(formEl, false);
     }
   });
 
@@ -888,10 +1106,13 @@ function bindManagerEvents() {
     event.preventDefault();
     const formEl = event.currentTarget;
     const form = new FormData(formEl);
+    setFormPending(formEl, true, "Creating...");
     try {
       await createFile({ employeeId: form.get("employeeId"), weekStart: form.get("weekStart") });
     } catch (error) {
       showNotice(error.message, "error");
+    } finally {
+      setFormPending(formEl, false);
     }
   });
 
@@ -899,6 +1120,7 @@ function bindManagerEvents() {
     event.preventDefault();
     const formEl = event.currentTarget;
     const form = new FormData(formEl);
+    setFormPending(formEl, true, "Adding...");
     try {
       await api("/api/manager/destinations", { method: "POST", body: { name: form.get("name") } });
       formEl.reset();
@@ -906,6 +1128,8 @@ function bindManagerEvents() {
       showNotice("Destination added.");
     } catch (error) {
       showNotice(error.message, "error");
+    } finally {
+      setFormPending(formEl, false);
     }
   });
 
@@ -927,10 +1151,13 @@ function bindEmployeeEvents() {
     event.preventDefault();
     const formEl = event.currentTarget;
     const form = new FormData(formEl);
+    setFormPending(formEl, true, "Creating...");
     try {
       await createFile({ weekStart: form.get("weekStart") });
     } catch (error) {
       showNotice(error.message, "error");
+    } finally {
+      setFormPending(formEl, false);
     }
   });
 }
@@ -972,9 +1199,26 @@ function bindFileEvents() {
     });
   }
 
+  document.querySelectorAll(".sheet-input").forEach((input) => {
+    input.addEventListener("input", () => {
+      const rows = [...document.querySelectorAll(".sheet-row")];
+      const index = rows.indexOf(input.closest(".sheet-row"));
+      delete state.rowErrors[errorKey(index, input.name)];
+      input.classList.remove("invalid");
+      input.setAttribute("aria-invalid", "false");
+      input.removeAttribute("aria-describedby");
+      input.parentElement.querySelector(".compact-error")?.remove();
+      if (!Object.keys(state.rowErrors).length) {
+        state.sheetError = "";
+        document.querySelector(".sheet-error-banner")?.remove();
+      }
+    });
+  });
+
   document.querySelector('[data-action="add-row"]')?.addEventListener("click", () => {
     state.selectedFile.rows = collectRows();
     state.selectedFile.rows.push(rowTemplate());
+    clearSheetValidation();
     render();
   });
 
@@ -984,6 +1228,7 @@ function bindFileEvents() {
       const rows = collectRows();
       rows.splice(index, 1);
       state.selectedFile.rows = rows.length ? rows : [rowTemplate()];
+      clearSheetValidation();
       render();
     });
   });

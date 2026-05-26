@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "init:mongo": "node scripts/init-mongo.js",
     "test": "node scripts/smoke-test.js"
   },
   "engines": {

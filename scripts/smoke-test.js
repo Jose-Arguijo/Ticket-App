@@ -77,6 +77,12 @@ async function run() {
   try {
     await waitForServer();
 
+    const health = await fetch(`${BASE}/api/health`);
+    assert(health.ok, "Health check should be available without a session.");
+
+    const missingAsset = await fetch(`${BASE}/missing-app-bundle.js`);
+    assert(missingAsset.status === 404, "Missing static assets should return 404 instead of the app shell.");
+
     const { client: admin } = await login("admin@tickets.local", "admin123");
     const adminFiles = await admin.request("/api/files");
     assert(adminFiles.response.status === 403, "Admin should not be able to read business paperwork files.");
@@ -85,6 +91,23 @@ async function run() {
       method: "POST",
       body: { name: "Scope Test Hauling" }
     });
+    const duplicateBusiness = await admin.request("/api/admin/businesses", {
+      method: "POST",
+      body: { name: "  scope test hauling  " }
+    });
+    assert(duplicateBusiness.response.status === 409, "Business names should be unique case-insensitively.");
+
+    const invalidManagerEmail = await admin.request("/api/admin/managers", {
+      method: "POST",
+      body: {
+        businessId: business.business.id,
+        name: "Invalid Manager",
+        email: "not-an-email",
+        password: "scope123"
+      }
+    });
+    assert(invalidManagerEmail.response.status === 400, "Manager creation should validate email format.");
+
     await admin.json("/api/admin/managers", {
       method: "POST",
       body: {
@@ -109,6 +132,11 @@ async function run() {
       body: { reviewNote: "Please confirm the ticket number." }
     });
     assert(flaggedFile.file.status === "needs_review", "Manager should be able to flag a file for review.");
+    const blankFlag = await demoManager.request(`/api/files/${demoFileId}/flag`, {
+      method: "POST",
+      body: { reviewNote: "   " }
+    });
+    assert(blankFlag.response.status === 400, "Manager review flags should require a note.");
 
     await demoManager.json("/api/manager/destinations", { method: "POST", body: { name: "South Yard" } });
     const destinations = await demoManager.json("/api/destinations");
@@ -157,6 +185,12 @@ async function run() {
     });
     assert(invalidTons.response.status === 400, "Tons should reject more than two decimal places.");
 
+    const malformedJson = await demoDriver.request("/api/files", {
+      method: "POST",
+      body: "{not-json"
+    });
+    assert(malformedJson.response.status === 400, "Malformed JSON should return a controlled 400 response.");
+
     const draft = await demoDriver.json("/api/files", {
       method: "POST",
       body: { weekStart: "2026-05-25", rows: [{ date: "2026-05-25", from: "North Pit", to: "Plant 4", ticketNumber: "200", tons: "5.25" }] }
@@ -177,12 +211,22 @@ async function run() {
     });
     assert(editSubmitted.response.ok, "Submitted files should remain editable by the employee.");
 
+    const incomplete = await demoDriver.json("/api/files", {
+      method: "POST",
+      body: { weekStart: "2026-06-08", rows: [{ date: "2026-06-08", from: "North Pit" }] }
+    });
+    const incompleteSubmit = await demoDriver.request(`/api/files/${incomplete.file.id}`, {
+      method: "PATCH",
+      body: { status: "submitted", rows: incomplete.file.rows }
+    });
+    assert(incompleteSubmit.response.status === 400, "Submitting should require complete ticket rows.");
+
     const exportResult = await demoDriver.request(`/api/files/${demoFileId}/export`);
     assert(exportResult.response.ok, "Employee should be able to export their own file.");
     assert(exportResult.contentType.includes("application/vnd.ms-excel"), "Export should be Excel-compatible.");
     assert(String(exportResult.payload).includes("Ticket Number"), "Export should include ticket number column.");
 
-    console.log("Smoke tests passed: role scoping, manager read-only files, review flags, draft deletion, submitted-file protection, validation, destinations, and Excel export.");
+    console.log("Smoke tests passed: health, static 404s, role scoping, manager read-only files, review flags, draft deletion, submitted-file protection, validation, destinations, and Excel export.");
   } finally {
     server.kill();
     await fs.rm(DATA_FILE, { force: true });

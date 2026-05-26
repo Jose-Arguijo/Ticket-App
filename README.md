@@ -10,6 +10,18 @@ npm start
 
 Open `http://localhost:4173`.
 
+Run the production smoke checks with:
+
+```bash
+npm test
+```
+
+If you have a MongoDB URI configured, seed the database with:
+
+```bash
+npm run init:mongo
+```
+
 ## Demo Accounts
 
 - Admin: `admin@tickets.local` / `admin123`
@@ -24,6 +36,7 @@ Open `http://localhost:4173`.
 - Employees can only see, create, edit, submit, and export their own files.
 - Employees can delete drafts, but submitted files cannot be deleted.
 - File API routes enforce scope on the server before returning file rows or downloads.
+- `/api/health` is available for deployment health checks.
 
 ## Deployment
 
