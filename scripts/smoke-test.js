@@ -284,7 +284,34 @@ async function run() {
     assert(exportResult.contentType.includes("application/vnd.ms-excel"), "Export should be Excel-compatible.");
     assert(String(exportResult.payload).includes("Ticket Number"), "Export should include ticket number column.");
 
-    console.log("Smoke tests passed: health, static 404s, role scoping, profile permissions, manager read-only files, review flags, draft deletion, submitted-file protection, validation, destinations, and Excel export.");
+    const wrongOldPassword = await demoDriver.request("/api/me/password", {
+      method: "PUT",
+      body: { oldPassword: "wrong-password", newPassword: "driver456", confirmPassword: "driver456" }
+    });
+    assert(wrongOldPassword.response.status === 401, "Password change should require the correct old password.");
+
+    const mismatchedPassword = await demoDriver.request("/api/me/password", {
+      method: "PUT",
+      body: { oldPassword: "driver123", newPassword: "driver456", confirmPassword: "driver789" }
+    });
+    assert(mismatchedPassword.response.status === 400, "Password change should require matching new passwords.");
+
+    const changedPassword = await demoDriver.json("/api/me/password", {
+      method: "PUT",
+      body: { oldPassword: "driver123", newPassword: "driver456", confirmPassword: "driver456" }
+    });
+    assert(changedPassword.ok, "Password change should succeed with old password and matching new passwords.");
+
+    const oldPasswordLogin = await makeClient().request("/api/login", {
+      method: "POST",
+      body: { email: "driver@demohauling.com", password: "driver123" }
+    });
+    assert(oldPasswordLogin.response.status === 401, "Old password should stop working after a password change.");
+
+    const { user: updatedDriver } = await login("driver@demohauling.com", "driver456");
+    assert(updatedDriver.email === "driver@demohauling.com", "New password should work after a password change.");
+
+    console.log("Smoke tests passed: health, static 404s, role scoping, profile permissions, password changes, manager read-only files, review flags, draft deletion, submitted-file protection, validation, destinations, and Excel export.");
   } finally {
     server.kill();
     await fs.rm(DATA_FILE, { force: true });

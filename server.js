@@ -840,6 +840,25 @@ async function handleApi(req, res, pathname, query) {
     return;
   }
 
+  if (method === "PUT" && pathname === "/api/me/password") {
+    const body = await readJson(req);
+    requireFields(body, ["oldPassword", "newPassword", "confirmPassword"]);
+
+    if (!verifyPassword(String(body.oldPassword), user.password)) {
+      throw new HttpError(401, "Old password is incorrect.");
+    }
+
+    const newPassword = validatePassword(body.newPassword);
+    if (newPassword !== String(body.confirmPassword || "")) {
+      throw new HttpError(400, "New passwords do not match.");
+    }
+
+    user.password = hashPassword(newPassword);
+    await writeDb(db);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
   if (method === "GET" && pathname === "/api/admin/businesses") {
     requireRole(user, ["admin"]);
     const result = db.businesses.map((business) => {

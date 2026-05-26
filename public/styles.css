@@ -690,6 +690,56 @@ textarea.input {
   padding: 18px;
 }
 
+/* ============================================================
+   MODAL PANES
+   ============================================================ */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(16, 42, 67, 0.46);
+}
+
+.modal-pane {
+  width: min(460px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-strong);
+}
+
+.modal-header {
+  padding: 18px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.15;
+  color: var(--color-text-primary);
+}
+
+.modal-header p {
+  margin: 6px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.modal-pane .settings-form {
+  padding: 18px;
+}
+
 .metric {
   padding: 18px;
   border-left: 4px solid var(--color-primary);
@@ -1408,6 +1458,15 @@ textarea.input {
     right: 12px;
     bottom: 12px;
     max-width: calc(100vw - 24px);
+  }
+
+  .modal-backdrop {
+    padding: 12px;
+  }
+
+  .modal-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .profile-info {

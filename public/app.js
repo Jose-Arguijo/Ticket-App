@@ -32,6 +32,7 @@ const state = {
   selectedProfileEmployeeId: "",
   savingProfileSection: "",
   settingsErrors: {},
+  passwordPaneOpen: false,
   editingBusinessId: ""
 };
 
@@ -410,6 +411,7 @@ function render() {
     <div class="app-shell">
       ${renderTopbar()}
       <main class="workspace">${renderCurrentView()}</main>
+      ${renderPasswordPane()}
       ${renderNotice()}
     </div>
   `;
@@ -868,13 +870,59 @@ function renderAccountInfoSettings() {
             <p>Core login and role information.</p>
           </div>
         </div>
-        <div class="panel-body field-grid">
-          ${renderLockedField("Email", state.user.email, "Contact an administrator to change")}
-          ${renderLockedField("Role", state.user.role, "Managed by account setup")}
-          ${renderLockedField("Business", state.business?.name || "Platform", "Managed by account setup")}
-          ${renderLockedField("Account ID", state.user.id, "System generated")}
+        <div class="panel-body">
+          <div class="field-grid">
+            ${renderLockedField("Email", state.user.email, "Contact an administrator to change")}
+            ${renderLockedField("Role", state.user.role, "Managed by account setup")}
+            ${renderLockedField("Business", state.business?.name || "Platform", "Managed by account setup")}
+            ${renderLockedField("Account ID", state.user.id, "System generated")}
+          </div>
+          <div class="section-actions">
+            <button class="button secondary" type="button" data-action="open-password-pane">Change Password</button>
+          </div>
         </div>
       </div>
+    </div>
+  `;
+}
+
+function renderPasswordPane() {
+  if (!state.passwordPaneOpen) return "";
+  const oldPasswordInvalid = state.settingsErrors.oldPassword ? "invalid" : "";
+  const newPasswordInvalid = state.settingsErrors.newPassword ? "invalid" : "";
+  const confirmPasswordInvalid = state.settingsErrors.confirmPassword ? "invalid" : "";
+  return `
+    <div class="modal-backdrop" data-action="close-password-pane">
+      <section class="modal-pane password-pane" role="dialog" aria-modal="true" aria-labelledby="change-password-title">
+        <div class="modal-header">
+          <div>
+            <h2 id="change-password-title">Change Password</h2>
+            <p>Confirm your old password before saving a new one.</p>
+          </div>
+          <button class="button ghost small" type="button" data-action="close-password-pane">Close</button>
+        </div>
+        <form class="settings-form" id="password-change-form" novalidate>
+          <label class="profile-field">
+            <span>Old password</span>
+            <input class="input ${oldPasswordInvalid}" name="oldPassword" type="password" autocomplete="current-password" required>
+            ${renderFieldError("oldPassword")}
+          </label>
+          <label class="profile-field">
+            <span>New password</span>
+            <input class="input ${newPasswordInvalid}" name="newPassword" type="password" autocomplete="new-password" minlength="6" maxlength="128" required>
+            ${renderFieldError("newPassword")}
+          </label>
+          <label class="profile-field">
+            <span>Reenter new password</span>
+            <input class="input ${confirmPasswordInvalid}" name="confirmPassword" type="password" autocomplete="new-password" minlength="6" maxlength="128" required>
+            ${renderFieldError("confirmPassword")}
+          </label>
+          <div class="section-actions">
+            <button class="button ghost" type="button" data-action="close-password-pane">Cancel</button>
+            <button class="button secondary" type="submit">Update Password</button>
+          </div>
+        </form>
+      </section>
     </div>
   `;
 }
@@ -1541,6 +1589,78 @@ async function saveEmploymentProfile(formEl) {
   }
 }
 
+function closePasswordPane() {
+  state.passwordPaneOpen = false;
+  state.settingsErrors = {};
+  render();
+}
+
+function focusPasswordField(name) {
+  document.querySelector(`#password-change-form [name="${name}"]`)?.focus();
+}
+
+function firstPasswordErrorField(errors) {
+  return ["oldPassword", "newPassword", "confirmPassword"].find((field) => errors[field]);
+}
+
+async function changePassword(formEl) {
+  const form = new FormData(formEl);
+  const oldPassword = String(form.get("oldPassword") || "");
+  const newPassword = String(form.get("newPassword") || "");
+  const confirmPassword = String(form.get("confirmPassword") || "");
+  const errors = {};
+
+  if (!oldPassword.trim()) errors.oldPassword = "Enter your old password.";
+  if (newPassword.length < 6) errors.newPassword = "Use at least 6 characters.";
+  if (newPassword.length > 128) errors.newPassword = "Use 128 characters or fewer.";
+  if (!confirmPassword) {
+    errors.confirmPassword = "Reenter your new password.";
+  } else if (newPassword !== confirmPassword) {
+    errors.confirmPassword = "New passwords do not match.";
+  }
+
+  state.settingsErrors = errors;
+  if (Object.keys(errors).length) {
+    render();
+    focusPasswordField(firstPasswordErrorField(errors));
+    return;
+  }
+
+  setFormPending(formEl, true, "Updating...");
+  try {
+    await api("/api/me/password", {
+      method: "PUT",
+      body: { oldPassword, newPassword, confirmPassword }
+    });
+    state.passwordPaneOpen = false;
+    state.settingsErrors = {};
+    render();
+    showNotice("Password changed.");
+  } catch (error) {
+    if (error.status === 401) {
+      state.settingsErrors = { oldPassword: error.message };
+      render();
+      focusPasswordField("oldPassword");
+      return;
+    }
+    if (error.status === 400 && error.message.includes("match")) {
+      state.settingsErrors = { confirmPassword: error.message };
+      render();
+      focusPasswordField("confirmPassword");
+      return;
+    }
+    if (error.status === 400 && error.message.includes("Password")) {
+      state.settingsErrors = { newPassword: error.message };
+      render();
+      focusPasswordField("newPassword");
+      return;
+    }
+    showNotice(error.message, "error");
+  } finally {
+    if (document.body.contains(formEl)) setFormPending(formEl, false);
+  }
+}
+
 async function updateBusiness(formEl) {
   const businessId = formEl.dataset.businessId;
   const form = new FormData(formEl);
@@ -1566,6 +1686,7 @@ function bindCommonEvents() {
       state.view = button.dataset.view;
       if (state.view !== "files") state.selectedFile = null;
       state.editingBusinessId = "";
+      state.passwordPaneOpen = false;
       state.settingsErrors = {};
       render();
     });
@@ -1583,9 +1704,29 @@ function bindCommonEvents() {
     state.selectedProfileEmployeeId = "";
     state.savingProfileSection = "";
     state.settingsErrors = {};
+    state.passwordPaneOpen = false;
     state.editingBusinessId = "";
     state.view = null;
     render();
+  });
+
+  document.querySelector('[data-action="open-password-pane"]')?.addEventListener("click", () => {
+    state.passwordPaneOpen = true;
+    state.settingsErrors = {};
+    render();
+    focusPasswordField("oldPassword");
+  });
+
+  document.querySelectorAll('[data-action="close-password-pane"]').forEach((element) => {
+    element.addEventListener("click", (event) => {
+      if (event.currentTarget.classList.contains("modal-backdrop") && event.target !== event.currentTarget) return;
+      closePasswordPane();
+    });
+  });
+
+  document.getElementById("password-change-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    changePassword(event.currentTarget);
   });
 
   document.getElementById("theme-form")?.addEventListener("submit", (event) => {
