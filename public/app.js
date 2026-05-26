@@ -1,5 +1,16 @@
 const app = document.getElementById("app");
 const API_BASE = (window.APP_CONFIG && window.APP_CONFIG.API_BASE ? window.APP_CONFIG.API_BASE : "").replace(/\/$/, "");
+const THEME_STORAGE_KEY = "ticketapp_theme";
+const THEME_OPTIONS = ["light", "dark", "system"];
+const PREFERRED_UNITS_OPTIONS = [
+  { value: "tons", label: "US tons" },
+  { value: "metric_tons", label: "Metric tons" }
+];
+const EMPLOYMENT_STATUS_OPTIONS = [
+  { value: "active", label: "Active" },
+  { value: "on_leave", label: "On leave" },
+  { value: "inactive", label: "Inactive" }
+];
 
 const state = {
   user: null,
@@ -16,22 +27,29 @@ const state = {
   busyAction: null,
   sheetError: "",
   rowErrors: {},
-  reviewError: ""
+  reviewError: "",
+  theme: "system",
+  selectedProfileEmployeeId: "",
+  savingProfileSection: "",
+  settingsErrors: {}
 };
 
 const viewsByRole = {
   admin: [
     { id: "businesses", label: "Businesses" },
-    { id: "setup", label: "Setup" }
+    { id: "setup", label: "Setup" },
+    { id: "settings", label: "Settings" }
   ],
   manager: [
     { id: "files", label: "Files" },
     { id: "employees", label: "Employees" },
-    { id: "company", label: "Company" }
+    { id: "company", label: "Company" },
+    { id: "settings", label: "Settings" }
   ],
   employee: [
     { id: "files", label: "Files" },
-    { id: "company", label: "Company" }
+    { id: "company", label: "Company" },
+    { id: "settings", label: "Settings" }
   ]
 };
 
@@ -49,6 +67,66 @@ const fieldLabels = {
   tons: "tons"
 };
 
+// ============================================================
+// THEME MANAGEMENT
+// ============================================================
+
+function initTheme() {
+  const saved = localStorage.getItem(THEME_STORAGE_KEY);
+  applyTheme(THEME_OPTIONS.includes(saved) ? saved : "system", { persist: Boolean(saved) });
+}
+
+function applyTheme(theme, options = {}) {
+  const nextTheme = THEME_OPTIONS.includes(theme) ? theme : "system";
+  const persist = options.persist !== false;
+  const htmlEl = document.documentElement;
+  
+  if (nextTheme === "system") {
+    const media = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    const isDark = Boolean(media?.matches);
+    htmlEl.setAttribute("data-theme", isDark ? "dark" : "light");
+  } else {
+    htmlEl.setAttribute("data-theme", nextTheme);
+  }
+  
+  state.theme = nextTheme;
+  if (persist) localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+}
+
+function syncThemeFromUser(user) {
+  const saved = localStorage.getItem(THEME_STORAGE_KEY);
+  if (!saved && user?.theme) applyTheme(user.theme);
+}
+
+async function setTheme(theme) {
+  const previousTheme = state.theme;
+  applyTheme(theme);
+  state.savingProfileSection = "theme";
+  render();
+  try {
+    const data = await api("/api/me/profile", {
+      method: "PUT",
+      body: { theme: state.theme }
+    });
+    state.user = data.user;
+    showNotice("Theme preference saved.");
+  } catch (error) {
+    applyTheme(previousTheme);
+    showNotice(error.message, "error");
+  } finally {
+    state.savingProfileSection = "";
+    render();
+  }
+}
+
+// Listen for system theme changes
+const systemThemeQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+systemThemeQuery?.addEventListener("change", () => {
+  if (state.theme === "system") {
+    applyTheme("system");
+  }
+});
+
 function today() {
   const date = new Date();
   date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
@@ -62,6 +140,28 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function displayNameFor(user) {
+  return user?.displayName || user?.name || "";
+}
+
+function initialsFor(user) {
+  const source = displayNameFor(user) || user?.email || "U";
+  return source
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || "")
+    .join("") || "U";
+}
+
+function optionLabel(options, value) {
+  return options.find((option) => option.value === value)?.label || value || "";
+}
+
+function destinationText(destinations = []) {
+  return Array.isArray(destinations) && destinations.length ? destinations.join(", ") : "";
 }
 
 function formatShortDate(value) {
@@ -245,10 +345,12 @@ function showNotice(message, type = "success") {
 }
 
 async function init() {
+  initTheme();
   render();
   try {
     const session = await api("/api/me");
     state.user = session.user;
+    syncThemeFromUser(state.user);
     state.business = session.business;
     state.view = defaultViewForRole(state.user.role);
     await refreshRoleData();
@@ -276,6 +378,9 @@ async function refreshRoleData() {
     state.employees = employees.employees;
     state.files = files.files;
     state.destinations = destinations.destinations;
+    if (!state.selectedProfileEmployeeId || !state.employees.some((employee) => employee.id === state.selectedProfileEmployeeId)) {
+      state.selectedProfileEmployeeId = state.employees[0]?.id || "";
+    }
   }
 
   if (state.user.role === "employee") {
@@ -328,7 +433,8 @@ function renderLoading() {
 
 function renderNotice() {
   if (!state.notice) return "";
-  return `<div class="notice ${state.noticeType === "error" ? "error" : ""}" role="status" aria-live="polite">${escapeHtml(state.notice)}</div>`;
+  const noticeClass = state.noticeType === "error" ? "error" : "success";
+  return `<div class="notice ${noticeClass}" role="status" aria-live="polite">${escapeHtml(state.notice)}</div>`;
 }
 
 function renderTopbar() {
@@ -339,7 +445,7 @@ function renderTopbar() {
         <img src="/truck-mark.svg" alt="">
         <div>
           <h1>Dispatch Papers</h1>
-          <p>${escapeHtml(businessName)} · ${escapeHtml(state.user.name)}</p>
+          <p>${escapeHtml(businessName)} · ${escapeHtml(displayNameFor(state.user))}</p>
         </div>
       </div>
       <div class="top-actions">
@@ -416,8 +522,11 @@ function renderLogin() {
         body: { email: form.get("email"), password: form.get("password") }
       });
       state.user = data.user;
+      syncThemeFromUser(state.user);
       state.view = defaultViewForRole(state.user.role);
       const session = await api("/api/me");
+      state.user = session.user;
+      syncThemeFromUser(state.user);
       state.business = session.business;
       await refreshRoleData();
       showNotice(`Welcome, ${state.user.name}.`);
@@ -429,6 +538,10 @@ function renderLogin() {
 }
 
 function renderCurrentView() {
+  if (state.view === "settings") {
+    return renderSettings();
+  }
+
   if (state.user.role === "admin") {
     return state.view === "setup" ? renderAdminSetup() : renderAdminBusinesses();
   }
@@ -441,6 +554,325 @@ function renderCurrentView() {
 
   if (state.view === "company") return renderCompany();
   return renderFilesPage();
+}
+
+// ============================================================
+// SETTINGS PAGE
+// ============================================================
+
+function renderSettings() {
+  return `
+    <div class="settings-container">
+      <div class="settings-header">
+        <span class="eyebrow">Operations settings</span>
+        <h1>Settings</h1>
+        <p>Theme, profile, and account details for the Dispatch Papers workspace.</p>
+      </div>
+
+      ${renderAppearanceSettings()}
+      ${state.user.role === "employee" ? renderPersonalProfileForm() : renderPersonalProfileReadonly()}
+      ${state.user.role === "manager" ? renderManagerEmploymentSettings() : renderEmployeeEmploymentSettings()}
+      ${renderAccountInfoSettings()}
+    </div>
+  `;
+}
+
+function renderAppearanceSettings() {
+  const saving = state.savingProfileSection === "theme";
+  return `
+    <div class="settings-section">
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Appearance</h2>
+            <p>Choose a light, dark, or system-matched cockpit.</p>
+          </div>
+        </div>
+        <div class="panel-body">
+          <form class="settings-form" id="theme-form">
+            <div class="theme-selector" role="radiogroup" aria-label="Theme mode">
+              ${[
+                { value: "light", title: "Light Mode", body: "Cream paper, navy controls" },
+                { value: "dark", title: "Dark Mode", body: "Matte navy command center" },
+                { value: "system", title: "System", body: "Follow this device" }
+              ]
+                .map(
+                  (option) => `
+                    <div class="theme-option">
+                      <input type="radio" id="theme-${option.value}" name="theme" value="${option.value}" ${state.theme === option.value ? "checked" : ""} ${saving ? "disabled" : ""}>
+                      <label for="theme-${option.value}">
+                        <span class="theme-swatch ${option.value}"></span>
+                        <strong>${option.title}</strong>
+                        <small>${option.body}</small>
+                      </label>
+                    </div>
+                  `
+                )
+                .join("")}
+            </div>
+            <div class="section-actions">
+              <button class="button secondary" type="submit" ${saving ? "disabled" : ""}>${saving ? "Saving..." : "Save theme"}</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderProfileSummary(user, helper = "") {
+  return `
+    <div class="profile-info">
+      <div class="profile-avatar" aria-hidden="true">${escapeHtml(initialsFor(user))}</div>
+      <div class="profile-details">
+        <div class="profile-name">${escapeHtml(displayNameFor(user))}</div>
+        <div class="profile-role">${escapeHtml(user.role.charAt(0).toUpperCase() + user.role.slice(1))}</div>
+        <div class="profile-email">${escapeHtml(user.email)}</div>
+        ${helper ? `<div class="helper-text">${escapeHtml(helper)}</div>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function renderFieldError(name) {
+  const message = state.settingsErrors[name];
+  return message ? `<span class="field-error">${escapeHtml(message)}</span>` : "";
+}
+
+function renderPersonalProfileForm() {
+  const saving = state.savingProfileSection === "personal";
+  return `
+    <div class="settings-section">
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Personal Profile</h2>
+            <p>Employee-managed details visible to your manager.</p>
+          </div>
+        </div>
+        <div class="panel-body">
+          ${renderProfileSummary(state.user)}
+          <form class="settings-form" id="personal-profile-form" novalidate>
+            <div class="form-row">
+              <label class="profile-field">
+                <span>Preferred display name</span>
+                <input class="input ${state.settingsErrors.displayName ? "invalid" : ""}" type="text" name="displayName" value="${escapeHtml(displayNameFor(state.user))}" maxlength="80" required ${saving ? "disabled" : ""}>
+                ${renderFieldError("displayName")}
+              </label>
+              <label class="profile-field">
+                <span>Preferred units</span>
+                <select class="select" name="preferredUnits" ${saving ? "disabled" : ""}>
+                  ${PREFERRED_UNITS_OPTIONS.map((option) => `<option value="${option.value}" ${state.user.preferredUnits === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
+                </select>
+              </label>
+            </div>
+            <div class="form-row">
+              <label class="profile-field">
+                <span>Phone number</span>
+                <input class="input" type="tel" name="phone" value="${escapeHtml(state.user.phone || "")}" maxlength="32" autocomplete="tel" ${saving ? "disabled" : ""}>
+              </label>
+              <label class="profile-field">
+                <span>Emergency contact</span>
+                <input class="input" type="text" name="emergencyContact" value="${escapeHtml(state.user.emergencyContact || "")}" maxlength="140" ${saving ? "disabled" : ""}>
+              </label>
+            </div>
+            <div class="section-actions">
+              <button class="button ghost" type="reset" ${saving ? "disabled" : ""}>Cancel</button>
+              <button class="button secondary" type="submit" ${saving ? "disabled" : ""}>${saving ? "Saving..." : "Save personal profile"}</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPersonalProfileReadonly() {
+  return `
+    <div class="settings-section">
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Personal Profile</h2>
+            <p>Driver-owned fields stay with each employee account.</p>
+          </div>
+        </div>
+        <div class="panel-body">
+          ${renderProfileSummary(state.user, "Managers and admins can save theme preferences from Appearance.")}
+          <div class="locked-callout">Driver personal details are managed by employee accounts.</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderLockedField(label, value, helper) {
+  return `
+    <label class="profile-field locked-field">
+      <span>${escapeHtml(label)}</span>
+      <input class="input" type="text" value="${escapeHtml(value || "Not set")}" disabled>
+      <div class="helper-text">${escapeHtml(helper)}</div>
+    </label>
+  `;
+}
+
+function renderEmployeeEmploymentSettings() {
+  if (state.user.role !== "employee") {
+    return `
+      <div class="settings-section">
+        <div class="panel">
+          <div class="panel-header">
+            <div><h2>Employment Details</h2><p>Employee employment profiles are managed by business managers.</p></div>
+          </div>
+          <div class="panel-body">
+            <div class="locked-callout">No employee employment profile is attached to this account.</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="settings-section">
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Employment Details</h2>
+            <p>Manager-controlled details visible on your profile.</p>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="field-grid">
+            ${renderLockedField("Employee full name", state.user.name, "Managed by your manager")}
+            ${renderLockedField("Assigned business", state.business?.name || "Unassigned", "Managed by your manager")}
+            ${renderLockedField("Employee ID", state.user.employeeCode || state.user.id, "Managed by your manager")}
+            ${renderLockedField("Truck number", state.user.truckNumber, "Managed by your manager")}
+            ${renderLockedField("Default destinations", destinationText(state.user.defaultDestinations), "Managed by your manager")}
+            ${renderLockedField("Employment status", optionLabel(EMPLOYMENT_STATUS_OPTIONS, state.user.employmentStatus), "Managed by your manager")}
+          </div>
+          <label class="profile-field section-gap">
+            <span>Notes visible to management</span>
+            <textarea class="input" disabled>${escapeHtml(state.user.managementNotes || "Not set")}</textarea>
+            <div class="helper-text">Managed by your manager</div>
+          </label>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function selectedProfileEmployee() {
+  if (!state.employees.length) return null;
+  return state.employees.find((employee) => employee.id === state.selectedProfileEmployeeId) || state.employees[0];
+}
+
+function renderManagerEmploymentSettings() {
+  const employee = selectedProfileEmployee();
+  const saving = state.savingProfileSection === "employment";
+  if (!employee) {
+    return `
+      <div class="settings-section">
+        <div class="panel">
+          <div class="panel-header">
+            <div><h2>Employment Details</h2><p>Manager-controlled employee profile information.</p></div>
+          </div>
+          ${renderEmptyState("No employees yet", "Create an employee before managing profile details.")}
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="settings-section">
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Employment Details</h2>
+            <p>Manager-owned employee fields for trucking operations.</p>
+          </div>
+        </div>
+        <div class="panel-body">
+          <label class="profile-field profile-picker">
+            <span>Employee</span>
+            <select class="select" id="profile-employee-select" ${saving ? "disabled" : ""}>
+              ${state.employees.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === employee.id ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}
+            </select>
+          </label>
+
+          ${renderProfileSummary(employee, "Employment fields are manager-managed. Personal contact fields are employee-managed.")}
+
+          <form class="settings-form" id="employment-profile-form" novalidate>
+            <div class="form-row">
+              <label class="profile-field">
+                <span>Employee full name</span>
+                <input class="input ${state.settingsErrors.employeeName ? "invalid" : ""}" name="name" value="${escapeHtml(employee.name)}" maxlength="100" required ${saving ? "disabled" : ""}>
+                ${renderFieldError("employeeName")}
+              </label>
+              <label class="profile-field">
+                <span>Employee ID</span>
+                <input class="input" name="employeeCode" value="${escapeHtml(employee.employeeCode || "")}" maxlength="40" ${saving ? "disabled" : ""}>
+              </label>
+            </div>
+            <div class="form-row">
+              <label class="profile-field">
+                <span>Truck number</span>
+                <input class="input" name="truckNumber" value="${escapeHtml(employee.truckNumber || "")}" maxlength="40" ${saving ? "disabled" : ""}>
+              </label>
+              <label class="profile-field">
+                <span>Employment status</span>
+                <select class="select" name="employmentStatus" ${saving ? "disabled" : ""}>
+                  ${EMPLOYMENT_STATUS_OPTIONS.map((option) => `<option value="${option.value}" ${employee.employmentStatus === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
+                </select>
+              </label>
+            </div>
+            <label class="profile-field">
+              <span>Default destinations</span>
+              <input class="input" name="defaultDestinations" value="${escapeHtml(destinationText(employee.defaultDestinations))}" maxlength="240" ${saving ? "disabled" : ""}>
+              <div class="helper-text">Separate destinations with commas.</div>
+            </label>
+            <label class="profile-field">
+              <span>Notes visible to management</span>
+              <textarea class="input" name="managementNotes" maxlength="500" ${saving ? "disabled" : ""}>${escapeHtml(employee.managementNotes || "")}</textarea>
+            </label>
+            <div class="section-actions">
+              <button class="button ghost" type="reset" ${saving ? "disabled" : ""}>Cancel</button>
+              <button class="button secondary" type="submit" ${saving ? "disabled" : ""}>${saving ? "Saving..." : "Save employment details"}</button>
+            </div>
+          </form>
+
+          <div class="section-divider"></div>
+          <div class="settings-section-title">Driver-Owned Personal Details</div>
+          <div class="field-grid">
+            ${renderLockedField("Preferred display name", employee.displayName || employee.name, "Managed by employee")}
+            ${renderLockedField("Phone number", employee.phone, "Managed by employee")}
+            ${renderLockedField("Emergency contact", employee.emergencyContact, "Managed by employee")}
+            ${renderLockedField("Preferred units", optionLabel(PREFERRED_UNITS_OPTIONS, employee.preferredUnits), "Managed by employee")}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderAccountInfoSettings() {
+  return `
+    <div class="settings-section">
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Account Info</h2>
+            <p>Core login and role information.</p>
+          </div>
+        </div>
+        <div class="panel-body field-grid">
+          ${renderLockedField("Email", state.user.email, "Contact an administrator to change")}
+          ${renderLockedField("Role", state.user.role, "Managed by account setup")}
+          ${renderLockedField("Business", state.business?.name || "Platform", "Managed by account setup")}
+          ${renderLockedField("Account ID", state.user.id, "System generated")}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function renderAdminBusinesses() {
@@ -1010,11 +1442,86 @@ async function flagFile(id) {
   }
 }
 
+async function savePersonalProfile(formEl) {
+  const form = new FormData(formEl);
+  const displayName = String(form.get("displayName") || "").trim();
+  state.settingsErrors = {};
+  if (displayName.length < 2) {
+    state.settingsErrors.displayName = "Enter at least 2 characters.";
+    render();
+    document.querySelector('[name="displayName"]')?.focus();
+    return;
+  }
+
+  state.savingProfileSection = "personal";
+  render();
+  try {
+    const data = await api("/api/me/profile", {
+      method: "PUT",
+      body: {
+        displayName,
+        phone: form.get("phone"),
+        emergencyContact: form.get("emergencyContact"),
+        preferredUnits: form.get("preferredUnits")
+      }
+    });
+    state.user = data.user;
+    state.settingsErrors = {};
+    showNotice("Personal profile saved.");
+  } catch (error) {
+    showNotice(error.message, "error");
+  } finally {
+    state.savingProfileSection = "";
+    render();
+  }
+}
+
+async function saveEmploymentProfile(formEl) {
+  const employee = selectedProfileEmployee();
+  if (!employee) return;
+
+  const form = new FormData(formEl);
+  const name = String(form.get("name") || "").trim();
+  state.settingsErrors = {};
+  if (name.length < 2) {
+    state.settingsErrors.employeeName = "Enter at least 2 characters.";
+    render();
+    document.querySelector('[name="name"]')?.focus();
+    return;
+  }
+
+  state.savingProfileSection = "employment";
+  render();
+  try {
+    const data = await api(`/api/manager/employees/${encodeURIComponent(employee.id)}/profile`, {
+      method: "PUT",
+      body: {
+        name,
+        employeeCode: form.get("employeeCode"),
+        truckNumber: form.get("truckNumber"),
+        defaultDestinations: form.get("defaultDestinations"),
+        employmentStatus: form.get("employmentStatus"),
+        managementNotes: form.get("managementNotes")
+      }
+    });
+    state.selectedProfileEmployeeId = data.employee.id;
+    await refreshRoleData();
+    state.settingsErrors = {};
+    showNotice("Employment details saved.");
+  } catch (error) {
+    showNotice(error.message, "error");
+  } finally {
+    state.savingProfileSection = "";
+    render();
+  }
+}
+
 function bindCommonEvents() {
   document.querySelectorAll('[data-action="nav"]').forEach((button) => {
     button.addEventListener("click", () => {
       state.view = button.dataset.view;
       if (state.view !== "files") state.selectedFile = null;
+      state.settingsErrors = {};
       render();
     });
   });
@@ -1028,7 +1535,32 @@ function bindCommonEvents() {
     state.files = [];
     state.destinations = [];
     state.selectedFile = null;
+    state.selectedProfileEmployeeId = "";
+    state.savingProfileSection = "";
+    state.settingsErrors = {};
     state.view = null;
+    render();
+  });
+
+  document.getElementById("theme-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setTheme(String(form.get("theme") || "system"));
+  });
+
+  document.getElementById("personal-profile-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    savePersonalProfile(event.currentTarget);
+  });
+
+  document.getElementById("employment-profile-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveEmploymentProfile(event.currentTarget);
+  });
+
+  document.getElementById("profile-employee-select")?.addEventListener("change", (event) => {
+    state.selectedProfileEmployeeId = event.currentTarget.value;
+    state.settingsErrors = {};
     render();
   });
 }

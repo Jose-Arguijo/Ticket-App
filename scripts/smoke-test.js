@@ -142,6 +142,33 @@ async function run() {
     const destinations = await demoManager.json("/api/destinations");
     assert(destinations.destinations.some((destination) => destination.name === "South Yard"), "Manager destination should be available for autofill.");
 
+    const managerPersonalAttempt = await demoManager.request("/api/me/profile", {
+      method: "PUT",
+      body: { phone: "555-0100" }
+    });
+    assert(managerPersonalAttempt.response.status === 403, "Manager should not update driver-owned personal profile fields.");
+
+    const demoEmployees = await demoManager.json("/api/manager/employees");
+    const demoEmployeeId = demoEmployees.employees[0].id;
+    const managerDriverFieldAttempt = await demoManager.request(`/api/manager/employees/${demoEmployeeId}/profile`, {
+      method: "PUT",
+      body: { phone: "555-0100" }
+    });
+    assert(managerDriverFieldAttempt.response.status === 403, "Manager should not update employee-owned personal fields.");
+
+    const managedProfile = await demoManager.json(`/api/manager/employees/${demoEmployeeId}/profile`, {
+      method: "PUT",
+      body: {
+        employeeCode: "DRV-100",
+        truckNumber: "TX-42",
+        defaultDestinations: "North Pit, Plant 4",
+        employmentStatus: "active",
+        managementNotes: "Cleared for weekly hauling."
+      }
+    });
+    assert(managedProfile.employee.truckNumber === "TX-42", "Manager should update manager-owned truck number.");
+    assert(managedProfile.employee.defaultDestinations.length === 2, "Manager should save default destinations.");
+
     const { client: scopeManager } = await login("scope.manager@example.com", "scope123");
     const employee = await scopeManager.json("/api/manager/employees", {
       method: "POST",
@@ -166,6 +193,25 @@ async function run() {
     assert(demoManagerCrossRead.response.status === 404, "Demo manager should not open scope business files.");
 
     const { client: demoDriver } = await login("driver@demohauling.com", "driver123");
+    const driverProfile = await demoDriver.json("/api/me/profile", {
+      method: "PUT",
+      body: {
+        displayName: "Demo Driver JD",
+        phone: "555-0101",
+        emergencyContact: "Dispatch 555-0102",
+        preferredUnits: "tons",
+        theme: "dark"
+      }
+    });
+    assert(driverProfile.user.displayName === "Demo Driver JD", "Employee should update preferred display name.");
+    assert(driverProfile.user.truckNumber === "TX-42", "Employee should see manager-owned truck number.");
+
+    const driverEmploymentAttempt = await demoDriver.request("/api/me/profile", {
+      method: "PUT",
+      body: { truckNumber: "TX-99" }
+    });
+    assert(driverEmploymentAttempt.response.status === 403, "Employee should not update manager-owned employment fields.");
+
     const driverFiles = await demoDriver.json("/api/files");
     assert(driverFiles.files.length === 1 && driverFiles.files[0].id === demoFileId, "Employee should see only their own file history.");
     assert(driverFiles.files[0].status === "needs_review", "Employee should see manager review flags on their own files.");
@@ -226,7 +272,7 @@ async function run() {
     assert(exportResult.contentType.includes("application/vnd.ms-excel"), "Export should be Excel-compatible.");
     assert(String(exportResult.payload).includes("Ticket Number"), "Export should include ticket number column.");
 
-    console.log("Smoke tests passed: health, static 404s, role scoping, manager read-only files, review flags, draft deletion, submitted-file protection, validation, destinations, and Excel export.");
+    console.log("Smoke tests passed: health, static 404s, role scoping, profile permissions, manager read-only files, review flags, draft deletion, submitted-file protection, validation, destinations, and Excel export.");
   } finally {
     server.kill();
     await fs.rm(DATA_FILE, { force: true });

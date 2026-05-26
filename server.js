@@ -18,6 +18,9 @@ const MONGODB_STATE_ID = "primary";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const MAX_JSON_BODY_BYTES = positiveNumber(process.env.MAX_JSON_BODY_BYTES, 1024 * 1024);
 const MAX_ROWS_PER_FILE = 250;
+const THEME_MODES = new Set(["light", "dark", "system"]);
+const PREFERRED_UNITS = new Set(["tons", "metric_tons"]);
+const EMPLOYMENT_STATUSES = new Set(["active", "inactive", "on_leave"]);
 
 let mongoClientPromise = null;
 let warnedJsonFallback = false;
@@ -71,7 +74,23 @@ function verifyPassword(password, stored) {
   return left.length === right.length && crypto.timingSafeEqual(left, right);
 }
 
-function makeUser({ name, email, password, role, businessId = null }) {
+function makeUser({
+  name,
+  email,
+  password,
+  role,
+  businessId = null,
+  displayName = null,
+  phone = null,
+  emergencyContact = null,
+  preferredUnits = "tons",
+  theme = "system",
+  employeeCode = "",
+  truckNumber = "",
+  defaultDestinations = [],
+  employmentStatus = "active",
+  managementNotes = ""
+}) {
   return {
     id: makeId("usr"),
     name,
@@ -79,6 +98,16 @@ function makeUser({ name, email, password, role, businessId = null }) {
     role,
     businessId,
     password: hashPassword(password),
+    displayName: displayName || name,
+    phone: phone || null,
+    emergencyContact: emergencyContact || null,
+    preferredUnits: PREFERRED_UNITS.has(preferredUnits) ? preferredUnits : "tons",
+    theme: theme || "system",
+    employeeCode: employeeCode || "",
+    truckNumber: truckNumber || "",
+    defaultDestinations: Array.isArray(defaultDestinations) ? defaultDestinations : [],
+    employmentStatus: EMPLOYMENT_STATUSES.has(employmentStatus) ? employmentStatus : "active",
+    managementNotes: managementNotes || "",
     createdAt: nowIso()
   };
 }
@@ -97,6 +126,12 @@ function cleanText(value, maxLength) {
 function validateName(value, label = "Name", maxLength = 100) {
   const cleaned = cleanText(value, maxLength);
   if (cleaned.length < 2) throw new HttpError(400, `${label} must be at least 2 characters.`);
+  return cleaned;
+}
+
+function validateOptionalText(value, label, maxLength) {
+  const cleaned = cleanText(value, maxLength);
+  if (String(value || "").trim() && !cleaned) throw new HttpError(400, `${label} is invalid.`);
   return cleaned;
 }
 
@@ -133,14 +168,73 @@ function normalizeToken(value, label) {
   return token;
 }
 
+function normalizeTheme(value) {
+  const theme = String(value || "system").trim();
+  if (!THEME_MODES.has(theme)) throw new HttpError(400, "Theme preference is invalid.");
+  return theme;
+}
+
+function normalizePreferredUnits(value) {
+  const units = String(value || "tons").trim();
+  if (!PREFERRED_UNITS.has(units)) throw new HttpError(400, "Preferred units are invalid.");
+  return units;
+}
+
+function normalizeEmploymentStatus(value) {
+  const status = String(value || "active").trim();
+  if (!EMPLOYMENT_STATUSES.has(status)) throw new HttpError(400, "Employment status is invalid.");
+  return status;
+}
+
+function normalizeDestinationList(value) {
+  const source = Array.isArray(value) ? value : String(value || "").split(",");
+  return source
+    .map((entry) => cleanText(entry, 80))
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function hydrateUserProfile(user) {
+  if (!user) return null;
+  user.displayName ||= user.name;
+  user.phone ??= null;
+  user.emergencyContact ??= null;
+  user.preferredUnits = PREFERRED_UNITS.has(user.preferredUnits) ? user.preferredUnits : "tons";
+  user.theme = THEME_MODES.has(user.theme) ? user.theme : "system";
+  user.employeeCode ||= "";
+  user.truckNumber ||= "";
+  user.defaultDestinations = Array.isArray(user.defaultDestinations) ? user.defaultDestinations : normalizeDestinationList(user.defaultDestinations);
+  user.employmentStatus = EMPLOYMENT_STATUSES.has(user.employmentStatus) ? user.employmentStatus : "active";
+  user.managementNotes ||= "";
+  return user;
+}
+
 function sanitizeUser(user) {
   if (!user) return null;
+  hydrateUserProfile(user);
   return {
     id: user.id,
     name: user.name,
+    displayName: user.displayName || user.name,
     email: user.email,
     role: user.role,
-    businessId: user.businessId || null
+    businessId: user.businessId || null,
+    phone: user.phone || "",
+    emergencyContact: user.emergencyContact || "",
+    preferredUnits: user.preferredUnits,
+    theme: user.theme,
+    employeeCode: user.employeeCode || "",
+    truckNumber: user.truckNumber || "",
+    defaultDestinations: user.defaultDestinations || [],
+    employmentStatus: user.employmentStatus || "active",
+    managementNotes: user.managementNotes || ""
+  };
+}
+
+function sanitizeEmployeeProfile(user, business) {
+  return {
+    ...sanitizeUser(user),
+    businessName: business?.name || ""
   };
 }
 
@@ -358,7 +452,7 @@ function applyCors(req, res) {
   res.setHeader("Access-Control-Allow-Origin", origin);
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Request-Id");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   res.setHeader("Access-Control-Expose-Headers", "X-Request-Id");
   res.setHeader("Vary", "Origin");
 }
@@ -707,6 +801,45 @@ async function handleApi(req, res, pathname, query) {
     return;
   }
 
+  if (method === "PUT" && pathname === "/api/me/profile") {
+    const body = await readJson(req);
+    const hasManagerFields = ["name", "employeeCode", "truckNumber", "defaultDestinations", "employmentStatus", "managementNotes", "businessId"].some(
+      (field) => body[field] !== undefined
+    );
+    if (hasManagerFields) {
+      throw new HttpError(403, "Employment profile fields are managed by managers.");
+    }
+
+    if (body.theme !== undefined) {
+      user.theme = normalizeTheme(body.theme);
+    }
+
+    const hasDriverFields = ["displayName", "phone", "emergencyContact", "preferredUnits"].some((field) => body[field] !== undefined);
+    if (hasDriverFields && user.role !== "employee") {
+      throw new HttpError(403, "Only employee accounts can update driver-owned profile fields.");
+    }
+
+    if (body.displayName !== undefined) {
+      user.displayName = validateName(body.displayName, "Preferred display name", 80);
+    }
+
+    if (body.phone !== undefined) {
+      user.phone = validateOptionalText(body.phone, "Phone number", 32) || null;
+    }
+
+    if (body.emergencyContact !== undefined) {
+      user.emergencyContact = validateOptionalText(body.emergencyContact, "Emergency contact", 140) || null;
+    }
+
+    if (body.preferredUnits !== undefined) {
+      user.preferredUnits = normalizePreferredUnits(body.preferredUnits);
+    }
+
+    await writeDb(db);
+    sendJson(res, 200, { user: sanitizeUser(user) });
+    return;
+  }
+
   if (method === "GET" && pathname === "/api/admin/businesses") {
     requireRole(user, ["admin"]);
     const result = db.businesses.map((business) => {
@@ -761,9 +894,10 @@ async function handleApi(req, res, pathname, query) {
 
   if (method === "GET" && pathname === "/api/manager/employees") {
     requireRole(user, ["manager"]);
+    const business = db.businesses.find((entry) => entry.id === user.businessId);
     const employees = db.users
       .filter((entry) => entry.role === "employee" && entry.businessId === user.businessId)
-      .map(sanitizeUser);
+      .map((entry) => sanitizeEmployeeProfile(entry, business));
     sendJson(res, 200, { employees });
     return;
   }
@@ -783,7 +917,34 @@ async function handleApi(req, res, pathname, query) {
     });
     db.users.push(employee);
     await writeDb(db);
-    sendJson(res, 201, { employee: sanitizeUser(employee) });
+    const business = db.businesses.find((entry) => entry.id === user.businessId);
+    sendJson(res, 201, { employee: sanitizeEmployeeProfile(employee, business) });
+    return;
+  }
+
+  const employeeProfileMatch = pathname.match(/^\/api\/manager\/employees\/([^/]+)\/profile$/);
+  if (employeeProfileMatch && method === "PUT") {
+    requireRole(user, ["manager"]);
+    const employeeId = normalizeToken(employeeProfileMatch[1], "Employee");
+    const employee = db.users.find((entry) => entry.id === employeeId && entry.businessId === user.businessId && entry.role === "employee");
+    if (!employee) throw new HttpError(404, "Employee not found in this business.");
+
+    const body = await readJson(req);
+    const hasDriverFields = ["displayName", "phone", "emergencyContact", "preferredUnits", "theme"].some((field) => body[field] !== undefined);
+    if (hasDriverFields) {
+      throw new HttpError(403, "Driver-owned profile fields are managed by the employee.");
+    }
+
+    if (body.name !== undefined) employee.name = validateName(body.name, "Employee full name", 100);
+    if (body.employeeCode !== undefined) employee.employeeCode = validateOptionalText(body.employeeCode, "Employee ID", 40);
+    if (body.truckNumber !== undefined) employee.truckNumber = validateOptionalText(body.truckNumber, "Truck number", 40);
+    if (body.defaultDestinations !== undefined) employee.defaultDestinations = normalizeDestinationList(body.defaultDestinations);
+    if (body.employmentStatus !== undefined) employee.employmentStatus = normalizeEmploymentStatus(body.employmentStatus);
+    if (body.managementNotes !== undefined) employee.managementNotes = validateOptionalText(body.managementNotes, "Management notes", 500);
+
+    await writeDb(db);
+    const business = db.businesses.find((entry) => entry.id === user.businessId);
+    sendJson(res, 200, { employee: sanitizeEmployeeProfile(employee, business) });
     return;
   }
 
