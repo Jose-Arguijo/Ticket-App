@@ -870,6 +870,26 @@ async function handleApi(req, res, pathname, query) {
     return;
   }
 
+  const adminBusinessMatch = pathname.match(/^\/api\/admin\/businesses\/([^/]+)$/);
+  if (adminBusinessMatch && method === "PUT") {
+    requireRole(user, ["admin"]);
+    const businessId = normalizeToken(adminBusinessMatch[1], "Business");
+    const business = db.businesses.find((entry) => entry.id === businessId);
+    if (!business) throw new HttpError(404, "Business not found.");
+
+    const body = await readJson(req);
+    requireFields(body, ["name"]);
+    const name = validateName(body.name, "Business name", 100);
+    if (db.businesses.some((entry) => entry.id !== business.id && entry.name.toLowerCase() === name.toLowerCase())) {
+      throw new HttpError(409, "That business already exists.");
+    }
+
+    business.name = name;
+    await writeDb(db);
+    sendJson(res, 200, { business: publicBusiness(business) });
+    return;
+  }
+
   if (method === "POST" && pathname === "/api/admin/managers") {
     requireRole(user, ["admin"]);
     const body = await readJson(req);

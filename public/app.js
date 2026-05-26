@@ -31,7 +31,8 @@ const state = {
   theme: "system",
   selectedProfileEmployeeId: "",
   savingProfileSection: "",
-  settingsErrors: {}
+  settingsErrors: {},
+  editingBusinessId: ""
 };
 
 const viewsByRole = {
@@ -281,12 +282,15 @@ function busyDisabled() {
 }
 
 function setFormPending(formEl, pending, label = "Saving...") {
-  const controls = formEl.querySelectorAll("input, select, textarea, button");
+  const associatedButtons = formEl.id
+    ? [...document.querySelectorAll("button[form]")].filter((button) => button.getAttribute("form") === formEl.id)
+    : [];
+  const controls = new Set([...formEl.querySelectorAll("input, select, textarea, button"), ...associatedButtons]);
   controls.forEach((control) => {
     control.disabled = pending;
   });
 
-  const submitButton = formEl.querySelector('button[type="submit"]');
+  const submitButton = formEl.querySelector('button[type="submit"]') || associatedButtons.find((button) => button.type === "submit");
   if (!submitButton) return;
   if (!submitButton.dataset.defaultText) submitButton.dataset.defaultText = submitButton.textContent;
   submitButton.textContent = pending ? label : submitButton.dataset.defaultText;
@@ -594,7 +598,7 @@ function renderAppearanceSettings() {
               ${[
                 { value: "light", title: "Light Mode", body: "Cream paper, navy controls" },
                 { value: "dark", title: "Dark Mode", body: "Matte navy command center" },
-                { value: "system", title: "System", body: "Follow this device" }
+                { value: "system", title: "System", body: "Follow device settings" }
               ]
                 .map(
                   (option) => `
@@ -927,19 +931,40 @@ function renderBusinessTable() {
   return `
     <div class="table-wrap">
       <table class="data-table">
-        <thead><tr><th>Business</th><th>Managers</th><th>Employees</th><th>Files</th></tr></thead>
+        <thead><tr><th>Business</th><th>Managers</th><th>Employees</th><th>Files</th><th class="actions">Actions</th></tr></thead>
         <tbody>
           ${state.businesses
-            .map(
-              (business) => `
+            .map((business) => {
+              const isEditing = state.editingBusinessId === business.id;
+              const formId = `business-edit-${business.id}`;
+              return `
                 <tr>
-                  <td><strong>${escapeHtml(business.name)}</strong></td>
+                  <td>
+                    ${
+                      isEditing
+                        ? `<form class="inline-edit-form business-edit-form" id="${escapeHtml(formId)}" data-business-id="${escapeHtml(business.id)}">
+                            <label class="sr-only" for="${escapeHtml(formId)}-name">Business name</label>
+                            <input class="input" id="${escapeHtml(formId)}-name" name="name" value="${escapeHtml(business.name)}" maxlength="100" required>
+                          </form>`
+                        : `<strong>${escapeHtml(business.name)}</strong>`
+                    }
+                  </td>
                   <td>${business.managers.map((manager) => escapeHtml(manager.name)).join(", ") || "None"}</td>
                   <td>${business.employeeCount}</td>
                   <td>${business.fileCount}</td>
+                  <td class="actions">
+                    <div class="split-actions">
+                      ${
+                        isEditing
+                          ? `<button class="button secondary small" type="submit" form="${escapeHtml(formId)}">Save</button>
+                            <button class="button ghost small" type="button" data-action="cancel-business-edit">Cancel</button>`
+                          : `<button class="button ghost small" data-action="edit-business" data-id="${escapeHtml(business.id)}">Edit</button>`
+                      }
+                    </div>
+                  </td>
                 </tr>
-              `
-            )
+              `;
+            })
             .join("")}
         </tbody>
       </table>
@@ -1516,11 +1541,31 @@ async function saveEmploymentProfile(formEl) {
   }
 }
 
+async function updateBusiness(formEl) {
+  const businessId = formEl.dataset.businessId;
+  const form = new FormData(formEl);
+  setFormPending(formEl, true, "Saving...");
+  try {
+    await api(`/api/admin/businesses/${encodeURIComponent(businessId)}`, {
+      method: "PUT",
+      body: { name: form.get("name") }
+    });
+    state.editingBusinessId = "";
+    await refreshRoleData();
+    showNotice("Business updated.");
+  } catch (error) {
+    showNotice(error.message, "error");
+  } finally {
+    setFormPending(formEl, false);
+  }
+}
+
 function bindCommonEvents() {
   document.querySelectorAll('[data-action="nav"]').forEach((button) => {
     button.addEventListener("click", () => {
       state.view = button.dataset.view;
       if (state.view !== "files") state.selectedFile = null;
+      state.editingBusinessId = "";
       state.settingsErrors = {};
       render();
     });
@@ -1538,6 +1583,7 @@ function bindCommonEvents() {
     state.selectedProfileEmployeeId = "";
     state.savingProfileSection = "";
     state.settingsErrors = {};
+    state.editingBusinessId = "";
     state.view = null;
     render();
   });
@@ -1574,6 +1620,7 @@ function bindAdminEvents() {
     try {
       await api("/api/admin/businesses", { method: "POST", body: { name: form.get("name") } });
       formEl.reset();
+      state.editingBusinessId = "";
       await refreshRoleData();
       showNotice("Business created.");
     } catch (error) {
@@ -1581,6 +1628,28 @@ function bindAdminEvents() {
     } finally {
       setFormPending(formEl, false);
     }
+  });
+
+  document.querySelectorAll(".business-edit-form").forEach((formEl) => {
+    formEl.addEventListener("submit", (event) => {
+      event.preventDefault();
+      updateBusiness(event.currentTarget);
+    });
+  });
+
+  document.querySelectorAll('[data-action="edit-business"]').forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editingBusinessId = button.dataset.id;
+      render();
+      document.querySelector(".business-edit-form .input")?.focus();
+    });
+  });
+
+  document.querySelectorAll('[data-action="cancel-business-edit"]').forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editingBusinessId = "";
+      render();
+    });
   });
 
   document.getElementById("manager-form")?.addEventListener("submit", async (event) => {

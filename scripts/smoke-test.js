@@ -97,6 +97,18 @@ async function run() {
     });
     assert(duplicateBusiness.response.status === 409, "Business names should be unique case-insensitively.");
 
+    const renamedBusiness = await admin.json(`/api/admin/businesses/${business.business.id}`, {
+      method: "PUT",
+      body: { name: "Scope Test Logistics" }
+    });
+    assert(renamedBusiness.business.name === "Scope Test Logistics", "Admin should be able to rename an existing business.");
+
+    const duplicateRename = await admin.request(`/api/admin/businesses/${business.business.id}`, {
+      method: "PUT",
+      body: { name: "demo hauling co." }
+    });
+    assert(duplicateRename.response.status === 409, "Business rename should enforce unique names case-insensitively.");
+
     const invalidManagerEmail = await admin.request("/api/admin/managers", {
       method: "POST",
       body: {
