@@ -1610,11 +1610,11 @@ async function changePassword(formEl) {
   const confirmPassword = String(form.get("confirmPassword") || "");
   const errors = {};
 
-  if (!oldPassword.trim()) errors.oldPassword = "Enter your old password.";
+  if (!oldPassword.trim()) errors.oldPassword = "Enter Your Old Password.";
   if (newPassword.length < 6) errors.newPassword = "Use at least 6 characters.";
   if (newPassword.length > 128) errors.newPassword = "Use 128 characters or fewer.";
   if (!confirmPassword) {
-    errors.confirmPassword = "Reenter your new password.";
+    errors.confirmPassword = "Re-Enter Your New Password.";
   } else if (newPassword !== confirmPassword) {
     errors.confirmPassword = "New passwords do not match.";
   }
