@@ -492,11 +492,6 @@ function renderLogin() {
               <p class="brand-subtitle">Ticket sheets built for truck paperwork.</p>
             </div>
           </div>
-          <div class="login-stats" aria-hidden="true">
-            <div class="login-stat"><strong>3</strong><span>Account types</span></div>
-            <div class="login-stat"><strong>5</strong><span>Sheet columns</span></div>
-            <div class="login-stat"><strong>XLS</strong><span>Exports</span></div>
-          </div>
         </div>
         <div class="login-panel">
           <form class="form" id="login-form">

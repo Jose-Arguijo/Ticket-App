@@ -241,10 +241,12 @@ textarea:focus-visible {
   padding: 40px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: center;
   background: linear-gradient(135deg, rgba(16, 42, 67, 0.95), rgba(45, 106, 79, 0.90)),
               repeating-linear-gradient(0deg, var(--color-hero-line), var(--color-hero-line) 1px, transparent 1px, transparent 42px);
   color: var(--color-cream);
+  text-align: center;
 }
 
 .brand-lockup {
@@ -260,52 +262,42 @@ textarea:focus-visible {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
 }
 
+.login-visual .brand-lockup {
+  align-items: center;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.login-visual .brand-lockup img {
+  width: 96px;
+  height: 96px;
+  border-radius: 16px;
+}
+
 .brand-title {
   margin: 0;
   font-family: Georgia, "Trebuchet MS", serif;
-  font-size: 28px;
+  font-size: 52px;
   font-weight: 700;
   line-height: 1.05;
   color: var(--color-cream);
 }
 
 .brand-subtitle {
-  margin: 8px 0 0;
+  margin: 14px auto 0;
+  max-width: 360px;
   color: rgba(247, 241, 227, 0.78);
-  font-size: 14px;
-}
-
-.login-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.login-stat {
-  min-height: 92px;
-  padding: 16px;
-  border: 1px solid rgba(247, 241, 227, 0.22);
-  border-radius: 8px;
-  background: rgba(247, 241, 227, 0.1);
-}
-
-.login-stat strong {
-  display: block;
-  font-size: 28px;
-  line-height: 1;
-  color: var(--color-cream);
-}
-
-.login-stat span {
-  display: block;
-  margin-top: 8px;
-  color: rgba(247, 241, 227, 0.78);
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .login-panel {
   padding: 40px;
-  align-self: center;
+  display: grid;
+  place-items: center;
+}
+
+.login-panel .form {
+  width: min(360px, 100%);
 }
 
 .login-panel h2 {
@@ -313,6 +305,7 @@ textarea:focus-visible {
   font-size: 22px;
   line-height: 1.15;
   color: var(--color-text-primary);
+  text-align: center;
 }
 
 /* ============================================================
@@ -1417,8 +1410,8 @@ textarea.input {
     order: 3;
   }
 
-  .login-stats {
-    grid-template-columns: 1fr;
+  .brand-title {
+    font-size: 40px;
   }
 
   .toolbar {
