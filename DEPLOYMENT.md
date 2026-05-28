@@ -89,6 +89,11 @@ Dashboard setup:
    - `COOKIE_SECURE=true`
 7. Deploy.
 
+Troubleshooting:
+
+- If Vercel logs show `MongoDB disabled` followed by an attempt to create `/var/task/data`, the deployment cannot reach MongoDB and is falling back to local JSON storage. Confirm `MONGODB_URI` is set for the same environment you deployed, remove any `NODE_ENV=development` value from Vercel, allow Vercel traffic in MongoDB Atlas Network Access, then redeploy.
+- `/api/health` should still return `200` so you can inspect whether MongoDB is configured without triggering a database read.
+
 CLI setup:
 
 ```bash

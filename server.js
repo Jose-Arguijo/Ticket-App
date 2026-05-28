@@ -16,6 +16,9 @@ const MONGODB_DB = process.env.MONGODB_DB || "ticket_app";
 const MONGODB_COLLECTION = process.env.MONGODB_COLLECTION || "app_state";
 const MONGODB_STATE_ID = "primary";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const IS_VERCEL_DEPLOYMENT = ["production", "preview"].includes(process.env.VERCEL_ENV || "");
+const IS_RENDER_DEPLOYMENT = process.env.RENDER === "true";
+const REQUIRES_EXTERNAL_DB = IS_PRODUCTION || IS_VERCEL_DEPLOYMENT || IS_RENDER_DEPLOYMENT;
 const MAX_JSON_BODY_BYTES = positiveNumber(process.env.MAX_JSON_BODY_BYTES, 1024 * 1024);
 const MAX_ROWS_PER_FILE = 250;
 const THEME_MODES = new Set(["light", "dark", "system"]);
@@ -23,7 +26,16 @@ const PREFERRED_UNITS = new Set(["tons", "metric_tons"]);
 const EMPLOYMENT_STATUSES = new Set(["active", "inactive", "on_leave"]);
 
 let mongoClientPromise = null;
-let warnedJsonFallback = false;
+
+function jsonFallbackAllowed() {
+  return !REQUIRES_EXTERNAL_DB;
+}
+
+function requireJsonFallbackAllowed() {
+  if (jsonFallbackAllowed()) return;
+  const reason = USE_MONGODB ? "MongoDB is unavailable" : "MONGODB_URI is not configured";
+  throw new HttpError(503, `${reason}. Configure a reachable MONGODB_URI for deployed environments.`);
+}
 
 function disableMongo(reason, error) {
   mongoEnabled = false;
@@ -348,7 +360,7 @@ async function getMongoCollection() {
       });
       mongoClientPromise = client.connect();
     } catch (error) {
-      if (!IS_PRODUCTION) {
+      if (jsonFallbackAllowed()) {
         disableMongo("initial MongoDB client creation failed", error);
         return null;
       }
@@ -361,7 +373,7 @@ async function getMongoCollection() {
     return client.db(MONGODB_DB).collection(MONGODB_COLLECTION);
   } catch (error) {
     mongoClientPromise = null;
-    if (!IS_PRODUCTION) {
+    if (jsonFallbackAllowed()) {
       disableMongo("MongoDB connection failed", error);
       return null;
     }
@@ -369,14 +381,8 @@ async function getMongoCollection() {
   }
 }
 
-function warnIfJsonFallbackInProduction() {
-  if (!IS_PRODUCTION || warnedJsonFallback) return;
-  warnedJsonFallback = true;
-  console.warn("MONGODB_URI is not configured; using local JSON storage. This is not durable for production deployments.");
-}
-
 async function ensureJsonDb() {
-  warnIfJsonFallbackInProduction();
+  requireJsonFallbackAllowed();
   await fs.mkdir(DB_DIR, { recursive: true });
   try {
     await fs.access(DB_FILE);
@@ -402,6 +408,7 @@ async function readDb() {
     }
   }
 
+  requireJsonFallbackAllowed();
   await ensureJsonDb();
   const raw = await fs.readFile(DB_FILE, "utf8");
   try {
@@ -421,6 +428,7 @@ async function writeDb(db) {
     }
   }
 
+  requireJsonFallbackAllowed();
   await fs.mkdir(DB_DIR, { recursive: true });
   const tmpFile = `${DB_FILE}.tmp`;
   try {
@@ -747,17 +755,20 @@ function createExcelHtml({ file, employee, business }) {
 }
 
 async function handleApi(req, res, pathname, query) {
-  const db = await readDb();
   const method = req.method || "GET";
 
   if (method === "GET" && pathname === "/api/health") {
     sendJson(res, 200, {
       ok: true,
-      storage: mongoEnabled ? "mongodb" : "json",
+      storage: mongoEnabled ? "mongodb" : jsonFallbackAllowed() ? "json" : "unavailable",
+      mongoConfigured: USE_MONGODB,
+      jsonFallbackAllowed: jsonFallbackAllowed(),
       time: nowIso()
     });
     return;
   }
+
+  const db = await readDb();
 
   if (method === "POST" && pathname === "/api/login") {
     const body = await readJson(req);
